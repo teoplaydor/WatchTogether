@@ -1,0 +1,15 @@
+{
+  "name": "watchtogether",
+  "version": "1.0.0",
+  "description": "Watch videos together with friends — synced playback, chat, and more",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.7.4",
+    "uuid": "^9.0.0"
+  }
+}

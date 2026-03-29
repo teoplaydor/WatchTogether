@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0a0a14">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="description" content="Смотри видео вместе с друзьями — YouTube, VK, Rutube. Синхронизация, чат, реакции.">
+  <title>WatchTogether</title>
+  <link rel="manifest" href="/manifest.json">
+  <link rel="icon" type="image/svg+xml" href="/icons/favicon.svg">
+  <link rel="apple-touch-icon" href="/icons/icon-192.svg">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Animated background orbs -->
+  <div class="animated-bg">
+    <div class="orb"></div>
+    <div class="orb"></div>
+    <div class="orb"></div>
+  </div>
+
+  <!-- ============ LOBBY SCREEN ============ -->
+  <div id="lobby" class="screen active">
+    <div class="lobby-container">
+      <div class="logo">
+        <div class="logo-icon">
+          <svg viewBox="0 0 64 64" fill="none">
+            <rect x="4" y="8" width="56" height="40" rx="6" fill="#7c6cf0" opacity="0.15" stroke="#7c6cf0" stroke-width="2.5"/>
+            <polygon points="26,18 26,38 42,28" fill="#7c6cf0"/>
+            <circle cx="20" cy="54" r="4" fill="#f06ce0"/>
+            <circle cx="32" cy="54" r="4" fill="#34d9a0"/>
+            <circle cx="44" cy="54" r="4" fill="#f0c86c"/>
+          </svg>
+        </div>
+        <h1>WatchTogether</h1>
+        <p class="tagline">Смотри видео вместе с друзьями</p>
+      </div>
+
+      <!-- PWA Install Banner -->
+      <div class="install-banner" id="install-banner">
+        <div class="install-banner-icon">📲</div>
+        <div class="install-banner-text">
+          <strong>Установить приложение</strong>
+          <span>Запуск в 1 клик с рабочего стола или главного экрана</span>
+        </div>
+        <button class="btn btn-primary btn-sm" id="install-btn">Установить</button>
+      </div>
+
+      <div class="lobby-form glass">
+        <div style="padding: 28px 24px; display: flex; flex-direction: column; gap: 22px;">
+          <div class="input-group">
+            <label>Никнейм</label>
+            <input type="text" id="nickname-input" maxlength="20" placeholder="Как тебя зовут?" autocomplete="off">
+          </div>
+
+          <div class="avatar-picker">
+            <label>Аватар</label>
+            <div class="avatars" id="avatar-list"></div>
+          </div>
+
+          <div class="lobby-actions">
+            <button id="create-room-btn" class="btn btn-primary btn-lg">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="16"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+              Создать комнату
+            </button>
+
+            <div class="divider"><span>или</span></div>
+
+            <div class="join-form">
+              <input type="text" id="room-code-input" maxlength="6" placeholder="КОД" autocomplete="off" style="text-transform: uppercase">
+              <button id="join-room-btn" class="btn btn-secondary">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 3h4a2 2 0 012 2v14a2 2 0 01-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+                Войти
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="lobby-footer">
+        <span class="platform-tag">▶ YouTube</span>
+        <span class="platform-tag">▶ VK Video</span>
+        <span class="platform-tag">▶ Rutube</span>
+        <span class="platform-tag">▶ Прямые ссылки</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ ROOM SCREEN ============ -->
+  <div id="room" class="screen">
+    <header class="room-header">
+      <div class="header-left">
+        <button id="leave-btn" class="btn-icon" title="Выйти из комнаты">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+        </button>
+        <div class="room-info">
+          <span class="room-title">WatchTogether</span>
+          <span class="room-code" id="room-code-display" title="Нажми чтобы скопировать"></span>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="users-count" id="users-count">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+          <span>0</span>
+        </div>
+        <button id="toggle-users-btn" class="btn-icon" title="Участники">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+        </button>
+        <button id="toggle-playlist-btn" class="btn-icon" title="Плейлист">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+        </button>
+      </div>
+    </header>
+
+    <div class="room-body">
+      <!-- Video Area -->
+      <div class="video-area">
+        <!-- Share box -->
+        <div class="share-box" id="share-box">
+          <div>
+            <div style="font-size:12px;color:var(--text-muted);margin-bottom:4px;">Пригласи друзей — отправь код:</div>
+            <div class="share-box-code" id="share-code"></div>
+          </div>
+          <div class="share-box-hint">Друзья открывают сайт, вводят код и подключаются к просмотру</div>
+          <button class="btn btn-primary btn-sm" id="copy-code-btn">📋 Копировать</button>
+        </div>
+
+        <div class="video-container" id="video-container">
+          <div class="video-placeholder" id="video-placeholder">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" width="64" height="64">
+              <rect x="2" y="4" width="20" height="14" rx="3"/>
+              <polygon points="10,8 10,14 15,11" fill="currentColor" stroke="none"/>
+              <line x1="7" y1="22" x2="17" y2="22"/>
+              <line x1="12" y1="18" x2="12" y2="22"/>
+            </svg>
+            <p>Добавьте видео для просмотра</p>
+            <p class="hint">Вставьте ссылку на YouTube, VK Video, Rutube или прямую ссылку на видеофайл</p>
+          </div>
+          <div id="player-wrapper" class="player-wrapper hidden">
+            <div id="youtube-player"></div>
+            <iframe id="iframe-player" allowfullscreen allow="autoplay; encrypted-media" style="display:none"></iframe>
+            <video id="html5-player" controls style="display:none"></video>
+          </div>
+          <div class="reactions-overlay" id="reactions-overlay"></div>
+        </div>
+
+        <!-- Video controls -->
+        <div class="video-add-bar">
+          <input type="text" id="video-url-input" placeholder="Вставьте ссылку на видео..." autocomplete="off">
+          <button id="add-video-btn" class="btn btn-primary">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+            Добавить
+          </button>
+        </div>
+
+        <!-- Reactions -->
+        <div class="reactions-bar">
+          <button class="reaction-btn" data-emoji="😂">😂</button>
+          <button class="reaction-btn" data-emoji="🔥">🔥</button>
+          <button class="reaction-btn" data-emoji="❤️">❤️</button>
+          <button class="reaction-btn" data-emoji="😱">😱</button>
+          <button class="reaction-btn" data-emoji="👏">👏</button>
+          <button class="reaction-btn" data-emoji="💀">💀</button>
+          <button class="reaction-btn" data-emoji="😭">😭</button>
+          <button class="reaction-btn" data-emoji="🤔">🤔</button>
+        </div>
+      </div>
+
+      <!-- Sidebar -->
+      <div class="sidebar" id="sidebar">
+        <div class="sidebar-tabs">
+          <button class="sidebar-tab active" data-tab="chat">💬 Чат</button>
+          <button class="sidebar-tab" data-tab="playlist">📋 Плейлист</button>
+          <button class="sidebar-tab" data-tab="users">👥 Участники</button>
+        </div>
+
+        <div class="sidebar-panel active" id="panel-chat">
+          <div class="chat-messages" id="chat-messages"></div>
+          <div class="typing-indicator" id="typing-indicator"></div>
+          <div class="chat-input-area">
+            <div class="emoji-picker-toggle">
+              <button id="emoji-toggle-btn" class="btn-icon" title="Эмодзи">😊</button>
+              <div class="emoji-picker hidden" id="emoji-picker">
+                <div class="emoji-grid"></div>
+              </div>
+            </div>
+            <input type="text" id="chat-input" placeholder="Сообщение..." maxlength="500" autocomplete="off">
+            <button id="send-btn" class="btn-icon" title="Отправить">
+              <svg viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="sidebar-panel" id="panel-playlist">
+          <div class="playlist-items" id="playlist-items">
+            <div class="playlist-empty">Плейлист пуст</div>
+          </div>
+        </div>
+
+        <div class="sidebar-panel" id="panel-users">
+          <div class="users-list" id="users-list"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mobile nav -->
+    <nav class="mobile-nav">
+      <button class="mobile-nav-btn active" data-panel="video">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="4" width="20" height="14" rx="3"/><polygon points="10,8 10,14 15,11"/></svg>
+        <span>Видео</span>
+      </button>
+      <button class="mobile-nav-btn" data-panel="chat">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+        <span>Чат</span>
+      </button>
+      <button class="mobile-nav-btn" data-panel="playlist">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/></svg>
+        <span>Лист</span>
+      </button>
+      <button class="mobile-nav-btn" data-panel="users">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+        <span>Люди</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- Toasts -->
+  <div class="toasts" id="toasts"></div>
+
+  <!-- Connection status -->
+  <div class="connection-status" id="connection-status">
+    <div class="spinner"></div>
+    <span>Подключение...</span>
+  </div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/js/player.js"></script>
+  <script src="/js/chat.js"></script>
+  <script src="/js/sync.js"></script>
+  <script src="/js/app.js"></script>
+  <script>
+    // Service Worker
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {});
+    }
+
+    // PWA Install
+    let deferredPrompt = null;
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      document.getElementById('install-banner').classList.add('show');
+    });
+    document.getElementById('install-btn').addEventListener('click', async () => {
+      if (!deferredPrompt) return;
+      deferredPrompt.prompt();
+      const result = await deferredPrompt.userChoice;
+      if (result.outcome === 'accepted') {
+        document.getElementById('install-banner').classList.remove('show');
+      }
+      deferredPrompt = null;
+    });
+    // Also show banner hint on iOS
+    if (/iPhone|iPad|iPod/.test(navigator.userAgent) && !window.navigator.standalone) {
+      const banner = document.getElementById('install-banner');
+      banner.querySelector('.install-banner-text span').textContent =
+        'Нажмите "Поделиться" → "На экран Домой"';
+      banner.querySelector('#install-btn').textContent = 'Как?';
+      banner.classList.add('show');
+    }
+  </script>
+</body>
+</html>
