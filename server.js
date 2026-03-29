@@ -12,11 +12,25 @@ const io = new Server(server, {
   pingTimeout: 5000
 });
 
-app.use(express.static(path.join(__dirname, 'public')));
+const fs = require('fs');
 
-// Fallback to index.html for SPA
+const publicDir = path.join(__dirname, 'public');
+
+// Debug endpoint
+app.get('/debug', (req, res) => {
+  const exists = fs.existsSync(publicDir);
+  const indexExists = fs.existsSync(path.join(publicDir, 'index.html'));
+  let files = [];
+  if (exists) {
+    try { files = fs.readdirSync(publicDir); } catch(e) { files = [e.message]; }
+  }
+  res.json({ __dirname, publicDir, exists, indexExists, files, cwd: process.cwd() });
+});
+
+app.use(express.static(publicDir));
+
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.sendFile(path.join(publicDir, 'index.html'));
 });
 
 // ==================== ROOMS ====================
