@@ -14,6 +14,11 @@ const io = new Server(server, {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Fallback to index.html for SPA
+app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
 // ==================== ROOMS ====================
 
 const rooms = new Map();
