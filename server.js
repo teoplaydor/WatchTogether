@@ -77,8 +77,10 @@ function getEstimatedTime(room) {
 setInterval(() => {
   const now = Date.now();
   for (const [code, room] of rooms) {
-    if (room.users.size === 0 && now - room.createdAt > 60000) {
+    // Delete empty rooms after 5 minutes
+    if (room.users.size === 0 && room.emptyAt && now - room.emptyAt > 300000) {
       rooms.delete(code);
+      console.log(`[ROOM] Room ${code} deleted (empty for 5 min)`);
     }
   }
 }, 30000);
@@ -113,6 +115,10 @@ io.on('connection', (socket) => {
     if (currentRoom) leaveRoom(socket);
 
     room.users.set(socket.id, { id: socket.id, nickname, avatar, joinedAt: Date.now() });
+    room.emptyAt = null; // Room is no longer empty
+    if (!room.hostId || !room.users.has(room.hostId)) {
+      room.hostId = socket.id; // Become host if previous host left
+    }
     currentRoom = room.code;
     socket.join(room.code);
 
@@ -325,8 +331,9 @@ io.on('connection', (socket) => {
     sock.leave(room.code);
 
     if (room.users.size === 0) {
-      rooms.delete(room.code);
-      console.log(`[ROOM] Room ${room.code} deleted (empty)`);
+      // Don't delete immediately — allow time to rejoin (e.g. page reload)
+      room.emptyAt = Date.now();
+      console.log(`[ROOM] Room ${room.code} is now empty, will delete in 5 min if no one rejoins`);
     } else {
       if (room.hostId === sock.id) {
         const firstUser = room.users.values().next().value;
