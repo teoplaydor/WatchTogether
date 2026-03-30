@@ -279,8 +279,9 @@ const App = (() => {
       switchSidebarTab('playlist');
     });
 
-    // Fullscreen toggle
+    // Fullscreen & PiP
     document.getElementById('fullscreen-btn')?.addEventListener('click', toggleFullscreen);
+    document.getElementById('pip-btn')?.addEventListener('click', togglePiP);
 
     // Mobile nav
     document.querySelectorAll('.mobile-nav-btn').forEach(btn => {
@@ -296,6 +297,78 @@ const App = (() => {
       document.exitFullscreen();
     } else {
       container.requestFullscreen().catch(() => {});
+    }
+  }
+
+  function togglePiP() {
+    // Try HTML5 video PiP first
+    const html5 = document.getElementById('html5-player');
+    if (html5 && html5.src && !html5.paused !== undefined) {
+      if (document.pictureInPictureElement) {
+        document.exitPictureInPicture().catch(() => {});
+      } else {
+        html5.requestPictureInPicture().catch(() => {});
+      }
+      return;
+    }
+
+    // For YouTube iframe — use Document PiP API (Chrome 116+)
+    if ('documentPictureInPicture' in window) {
+      openDocumentPiP();
+      return;
+    }
+
+    // Fallback: try to grab video from YouTube iframe
+    try {
+      const iframe = document.getElementById('youtube-player');
+      if (iframe?.tagName === 'IFRAME') {
+        // Can't access cross-origin iframe video, use Document PiP
+        toast('PiP: нажми правой кнопкой на видео → Картинка в картинке', 'info');
+      }
+    } catch(e) {}
+  }
+
+  async function openDocumentPiP() {
+    try {
+      const container = document.getElementById('video-container');
+      const pipWindow = await documentPictureInPicture.requestWindow({
+        width: 480,
+        height: 270
+      });
+
+      // Copy styles
+      const styles = document.querySelectorAll('link[rel="stylesheet"], style');
+      styles.forEach(s => pipWindow.document.head.appendChild(s.cloneNode(true)));
+
+      // Add base styles for PiP window
+      const style = pipWindow.document.createElement('style');
+      style.textContent = 'body { margin: 0; background: #000; overflow: hidden; } .video-container { position: fixed; inset: 0; border-radius: 0; }';
+      pipWindow.document.head.appendChild(style);
+
+      // Move video container to PiP
+      const playerWrapper = document.getElementById('player-wrapper');
+      const chatOverlay = document.getElementById('chat-overlay');
+      const reactionsOverlay = document.getElementById('reactions-overlay');
+
+      const pipContainer = pipWindow.document.createElement('div');
+      pipContainer.className = 'video-container';
+      pipContainer.id = 'video-container';
+      pipContainer.appendChild(playerWrapper);
+      pipContainer.appendChild(chatOverlay);
+      pipContainer.appendChild(reactionsOverlay);
+      pipWindow.document.body.appendChild(pipContainer);
+
+      // On PiP close — move elements back
+      pipWindow.addEventListener('pagehide', () => {
+        const origContainer = document.getElementById('video-container');
+        if (origContainer) {
+          origContainer.insertBefore(reactionsOverlay, origContainer.querySelector('.video-overlay-btns'));
+          origContainer.insertBefore(chatOverlay, reactionsOverlay);
+          origContainer.insertBefore(playerWrapper, chatOverlay);
+        }
+      });
+    } catch(e) {
+      toast('PiP недоступен в этом браузере', 'info');
     }
   }
 

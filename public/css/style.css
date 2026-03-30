@@ -354,29 +354,33 @@ input[type="text"]:focus {
   100% { opacity: 0; transform: translateY(-4px); }
 }
 
-/* ==================== FULLSCREEN BUTTON ==================== */
-.fullscreen-btn {
+/* ==================== VIDEO OVERLAY BUTTONS ==================== */
+.video-overlay-btns {
   position: absolute; bottom: 12px; right: 12px;
-  width: 40px; height: 40px; z-index: 7;
+  display: flex; gap: 6px; z-index: 7;
+  opacity: 0; transition: opacity 0.25s ease;
+}
+.video-container:hover .video-overlay-btns { opacity: 1; }
+
+.video-overlay-btn {
+  width: 40px; height: 40px;
   border: none; border-radius: 10px;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(0, 0, 0, 0.55);
   backdrop-filter: blur(6px);
   color: rgba(255,255,255,0.8);
   cursor: pointer; display: flex;
   align-items: center; justify-content: center;
   transition: all 0.2s ease;
-  opacity: 0;
 }
-.video-container:hover .fullscreen-btn { opacity: 1; }
-.fullscreen-btn:hover { background: rgba(0,0,0,0.75); color: #fff; transform: scale(1.1); }
-.fullscreen-btn svg { width: 20px; height: 20px; }
+.video-overlay-btn:hover { background: rgba(0,0,0,0.8); color: #fff; transform: scale(1.1); }
+.video-overlay-btn svg { width: 20px; height: 20px; }
 
 /* Fullscreen mode */
 .video-container:fullscreen { background: #000; }
 .video-container:fullscreen .chat-overlay { padding: 24px; }
 .video-container:fullscreen .chat-overlay-msg { font-size: 15px; max-width: 50%; }
-.video-container:fullscreen .fullscreen-btn { opacity: 0; }
-.video-container:fullscreen:hover .fullscreen-btn { opacity: 1; }
+.video-container:fullscreen .video-overlay-btns { opacity: 0; }
+.video-container:fullscreen:hover .video-overlay-btns { opacity: 1; }
 
 .video-add-bar {
   display: flex; gap: 8px; flex-shrink: 0;
