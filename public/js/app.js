@@ -29,17 +29,14 @@ const App = (() => {
     const code = params.get('room');
     if (code && code.length === 6) {
       document.getElementById('room-code-input').value = code.toUpperCase();
-      // Auto-join if we have a saved nickname
-      const saved = localStorage.getItem('wt-nickname');
-      if (saved) {
-        const waitForSocket = setInterval(() => {
-          if (socket?.connected) {
-            clearInterval(waitForSocket);
-            joinRoom();
-          }
-        }, 200);
-        setTimeout(() => clearInterval(waitForSocket), 5000);
-      }
+      // Always auto-join when URL has room code (use saved or generate nickname)
+      const waitForSocket = setInterval(() => {
+        if (socket?.connected) {
+          clearInterval(waitForSocket);
+          joinRoom();
+        }
+      }, 200);
+      setTimeout(() => clearInterval(waitForSocket), 10000);
     }
   }
 
