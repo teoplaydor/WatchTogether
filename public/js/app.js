@@ -47,17 +47,36 @@ const App = (() => {
     socket.on('connect', () => {
       status.classList.remove('visible');
       myId = socket.id;
+
+      // Auto-rejoin room after reconnect
+      if (roomCode) {
+        const nickname = localStorage.getItem('wt-nickname') || 'Аноним';
+        const avatar = localStorage.getItem('wt-avatar') || '😎';
+        socket.emit('join-room', { code: roomCode, nickname, avatar }, (res) => {
+          if (res.success) {
+            users = res.users;
+            isHost = res.isHost;
+            playlist = res.playlist || [];
+            currentIndex = res.currentIndex ?? -1;
+            renderUsers();
+            renderPlaylist();
+            if (res.currentVideo) {
+              Player.load(res.currentVideo, Sync.onPlayerStateChange);
+              if (res.playbackState?.currentTime > 0) {
+                setTimeout(() => Player.seekTo(res.playbackState.currentTime), 1000);
+              }
+            }
+            toast('Переподключились!', 'success');
+          } else {
+            toast('Комната больше не существует', 'error');
+            leaveRoom();
+          }
+        });
+      }
     });
 
     socket.on('disconnect', () => {
       status.classList.add('visible');
-    });
-
-    socket.on('reconnect', () => {
-      status.classList.remove('visible');
-      if (roomCode) {
-        toast('Переподключение...', 'info');
-      }
     });
 
     // Room events
