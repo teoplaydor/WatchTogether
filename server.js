@@ -213,7 +213,7 @@ io.on('connection', (socket) => {
   // Play video from playlist
   socket.on('play-video-at', ({ index }) => {
     const room = getRoom(currentRoom);
-    if (!room || socket.id !== room.hostId) return;
+    if (!room) return;
     if (index < 0 || index >= room.playlist.length) return;
 
     room.currentIndex = index;
@@ -228,36 +228,36 @@ io.on('connection', (socket) => {
   // Playback sync events
   socket.on('sync-play', ({ currentTime }) => {
     const room = getRoom(currentRoom);
-    if (!room || socket.id !== room.hostId) return;
+    if (!room) return;
     room.playbackState = { ...room.playbackState, playing: true, currentTime, lastUpdate: Date.now() };
     socket.to(room.code).emit('sync-play', { currentTime });
   });
 
   socket.on('sync-pause', ({ currentTime }) => {
     const room = getRoom(currentRoom);
-    if (!room || socket.id !== room.hostId) return;
+    if (!room) return;
     room.playbackState = { ...room.playbackState, playing: false, currentTime, lastUpdate: Date.now() };
     socket.to(room.code).emit('sync-pause', { currentTime });
   });
 
   socket.on('sync-seek', ({ currentTime }) => {
     const room = getRoom(currentRoom);
-    if (!room || socket.id !== room.hostId) return;
+    if (!room) return;
     room.playbackState = { ...room.playbackState, currentTime, lastUpdate: Date.now() };
     socket.to(room.code).emit('sync-seek', { currentTime });
   });
 
   socket.on('sync-rate', ({ rate }) => {
     const room = getRoom(currentRoom);
-    if (!room || socket.id !== room.hostId) return;
+    if (!room) return;
     room.playbackState.playbackRate = rate;
     socket.to(room.code).emit('sync-rate', { rate });
   });
 
-  // Periodic sync check from host
+  // Periodic sync check
   socket.on('sync-state', ({ currentTime, playing }) => {
     const room = getRoom(currentRoom);
-    if (!room || socket.id !== room.hostId) return;
+    if (!room) return;
     room.playbackState = { ...room.playbackState, currentTime, playing, lastUpdate: Date.now() };
     socket.to(room.code).emit('sync-state', { currentTime, playing });
   });
@@ -273,7 +273,7 @@ io.on('connection', (socket) => {
   // Next/Prev video
   socket.on('next-video', () => {
     const room = getRoom(currentRoom);
-    if (!room || socket.id !== room.hostId) return;
+    if (!room) return;
     if (room.currentIndex < room.playlist.length - 1) {
       room.currentIndex++;
       room.playbackState = { playing: false, currentTime: 0, lastUpdate: Date.now(), playbackRate: 1 };
@@ -287,7 +287,7 @@ io.on('connection', (socket) => {
 
   socket.on('prev-video', () => {
     const room = getRoom(currentRoom);
-    if (!room || socket.id !== room.hostId) return;
+    if (!room) return;
     if (room.currentIndex > 0) {
       room.currentIndex--;
       room.playbackState = { playing: false, currentTime: 0, lastUpdate: Date.now(), playbackRate: 1 };

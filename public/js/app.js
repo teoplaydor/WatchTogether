@@ -21,6 +21,26 @@ const App = (() => {
     Chat.init();
     loadNickname();
     connectSocket();
+    checkUrlRoomCode();
+  }
+
+  function checkUrlRoomCode() {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('room');
+    if (code && code.length === 6) {
+      document.getElementById('room-code-input').value = code.toUpperCase();
+      // Auto-join if we have a saved nickname
+      const saved = localStorage.getItem('wt-nickname');
+      if (saved) {
+        const waitForSocket = setInterval(() => {
+          if (socket?.connected) {
+            clearInterval(waitForSocket);
+            joinRoom();
+          }
+        }, 200);
+        setTimeout(() => clearInterval(waitForSocket), 5000);
+      }
+    }
   }
 
   function connectSocket() {
@@ -49,7 +69,6 @@ const App = (() => {
       users = u;
       if (newHostId === myId && !isHost) {
         isHost = true;
-        Sync.setHost(true);
         toast('Вы теперь хост!', 'info');
       }
       renderUsers();
@@ -57,7 +76,6 @@ const App = (() => {
     socket.on('host-changed', ({ newHostId, users: u }) => {
       users = u;
       isHost = newHostId === myId;
-      Sync.setHost(isHost);
       renderUsers();
     });
 
@@ -154,7 +172,6 @@ const App = (() => {
       if (e.key === 'Enter') joinRoom();
     });
 
-    // Auto-uppercase room code
     document.getElementById('room-code-input').addEventListener('input', (e) => {
       e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
     });
@@ -182,7 +199,8 @@ const App = (() => {
     playlist = data.playlist || [];
     currentIndex = data.currentIndex ?? -1;
 
-    Sync.setHost(isHost);
+    // Update URL with room code
+    window.history.replaceState({}, '', `?room=${roomCode}`);
 
     // Switch screen
     document.getElementById('lobby').classList.remove('active');
@@ -194,8 +212,9 @@ const App = (() => {
     // Share box
     document.getElementById('share-code').textContent = roomCode;
     document.getElementById('copy-code-btn').onclick = () => {
-      const shareText = `Заходи смотреть вместе!\nКод комнаты: ${roomCode}\n${window.location.origin}`;
-      navigator.clipboard?.writeText(shareText).then(() => toast('Скопировано!', 'success'));
+      const shareUrl = `${window.location.origin}?room=${roomCode}`;
+      const shareText = `Заходи смотреть вместе!\n${shareUrl}`;
+      navigator.clipboard?.writeText(shareText).then(() => toast('Ссылка скопирована!', 'success'));
     };
 
     // Render
@@ -226,7 +245,8 @@ const App = (() => {
 
     // Copy room code
     document.getElementById('room-code-display').addEventListener('click', () => {
-      navigator.clipboard?.writeText(roomCode).then(() => toast('Код скопирован!', 'success'));
+      const shareUrl = `${window.location.origin}?room=${roomCode}`;
+      navigator.clipboard?.writeText(shareUrl).then(() => toast('Ссылка скопирована!', 'success'));
     });
 
     // Add video
@@ -259,12 +279,24 @@ const App = (() => {
       switchSidebarTab('playlist');
     });
 
+    // Fullscreen toggle
+    document.getElementById('fullscreen-btn')?.addEventListener('click', toggleFullscreen);
+
     // Mobile nav
     document.querySelectorAll('.mobile-nav-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         showMobilePanel(btn.dataset.panel);
       });
     });
+  }
+
+  function toggleFullscreen() {
+    const container = document.getElementById('video-container');
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+    } else {
+      container.requestFullscreen().catch(() => {});
+    }
   }
 
   function switchSidebarTab(tabName) {
@@ -291,7 +323,6 @@ const App = (() => {
 
   function leaveRoom() {
     socket.emit('leave-room');
-    Sync.destroy();
     Player.unload();
     Chat.clear();
     roomCode = null;
@@ -299,6 +330,9 @@ const App = (() => {
     users = [];
     playlist = [];
     currentIndex = -1;
+
+    // Clear URL
+    window.history.replaceState({}, '', '/');
 
     document.getElementById('room').classList.remove('active');
     document.getElementById('lobby').classList.add('active');
@@ -356,7 +390,6 @@ const App = (() => {
       container.appendChild(div);
     });
 
-    // Transfer host buttons
     container.querySelectorAll('[data-action="transfer-host"]').forEach(btn => {
       btn.addEventListener('click', () => {
         socket.emit('transfer-host', { userId: btn.dataset.userId });
@@ -391,7 +424,7 @@ const App = (() => {
 
       div.addEventListener('click', (e) => {
         if (e.target.closest('.playlist-item-remove')) return;
-        if (isHost) socket.emit('play-video-at', { index: idx });
+        socket.emit('play-video-at', { index: idx });
       });
 
       container.appendChild(div);

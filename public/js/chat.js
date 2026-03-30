@@ -10,6 +10,7 @@ const Chat = (() => {
     '😴', '🥱', '🤮', '💩', '🐸', '🦊', '🐱', '🐶'
   ];
 
+  const MAX_OVERLAY_MSGS = 5;
   let messagesContainer;
   let chatInput;
   let typingIndicator;
@@ -94,15 +95,37 @@ const Chat = (() => {
         </div>
         <div class="msg-text">${escapeHtml(msg.text)}</div>
       `;
+
+      // Show floating overlay on video
+      showChatOverlay(msg);
     }
 
     messagesContainer.appendChild(div);
     messagesContainer.scrollTop = messagesContainer.scrollHeight;
 
-    // Limit messages
     while (messagesContainer.children.length > 300) {
       messagesContainer.removeChild(messagesContainer.firstChild);
     }
+  }
+
+  // ---- Floating chat overlay on video ----
+
+  function showChatOverlay(msg) {
+    const overlay = document.getElementById('chat-overlay');
+    if (!overlay) return;
+
+    const el = document.createElement('div');
+    el.className = 'chat-overlay-msg';
+    el.innerHTML = `<span class="chat-overlay-name">${escapeHtml(msg.nickname)}</span> ${escapeHtml(msg.text)}`;
+    overlay.appendChild(el);
+
+    // Limit visible messages
+    while (overlay.children.length > MAX_OVERLAY_MSGS) {
+      overlay.removeChild(overlay.firstChild);
+    }
+
+    // Remove after animation
+    setTimeout(() => el.remove(), 5000);
   }
 
   function showTyping(nickname) {
