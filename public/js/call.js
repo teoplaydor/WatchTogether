@@ -70,7 +70,10 @@ const Call = (() => {
 
     pc.ontrack = (e) => {
       const peer = peers.get(peerId);
-      if (peer) peer.stream = e.streams[0];
+      if (!peer) return;
+      // Create stream from individual tracks (more reliable than e.streams[0])
+      if (!peer.stream) peer.stream = new MediaStream();
+      peer.stream.addTrack(e.track);
       renderCallGrid();
     };
 
@@ -140,39 +143,17 @@ const Call = (() => {
   // Connect to all other users in the room
   async function connectToAllUsers() {
     if (!audioEnabled && !videoEnabled) {
-      // Turned off all media — close all peers
-      for (const [id, peer] of peers) {
-        peer.pc.close();
-      }
+      for (const [, peer] of peers) peer.pc.close();
       peers.clear();
       renderCallGrid();
       return;
     }
 
-    // Get current user list from App
-    const userList = document.querySelectorAll('.user-item');
-    // We also need socket IDs — use the stored users array approach
-    // Emit request to server for current users, but simpler: just re-offer to existing peers
-    // AND create new connections via the server
+    // Close all existing peers and reconnect fresh with new tracks
+    for (const [, peer] of peers) peer.pc.close();
+    peers.clear();
 
-    // First: update tracks on existing peers
-    for (const [peerId, peer] of peers) {
-      const senders = peer.pc.getSenders();
-      senders.forEach(s => { try { peer.pc.removeTrack(s); } catch(e) {} });
-      if (localStream) {
-        localStream.getTracks().forEach(track => peer.pc.addTrack(track, localStream));
-      }
-      try {
-        const offer = await peer.pc.createOffer();
-        await peer.pc.setLocalDescription(offer);
-        _socket.emit('call-offer', { to: peerId, offer });
-      } catch(e) {}
-    }
-
-    // Second: broadcast that we have media — server will notify others
-    // Others will connect to us via 'user-media-state' handler
-    // But we also need to initiate to users who already have media
-    // Request room status to get user IDs
+    // Request list of peers who have media active
     _socket.emit('request-call-peers');
   }
 
@@ -235,6 +216,12 @@ const Call = (() => {
     video.playsInline = true;
     video.muted = muted;
     video.srcObject = stream;
+    // Force play (autoplay can be blocked)
+    video.play().catch(() => {
+      // If blocked, try muted autoplay then unmute
+      video.muted = true;
+      video.play().catch(() => {});
+    });
     wrapper.appendChild(video);
     if (label) {
       const lbl = document.createElement('span');
