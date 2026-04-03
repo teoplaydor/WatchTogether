@@ -16,6 +16,11 @@ const Call = (() => {
     _socket = socket;
 
     socket.on('call-offer', async ({ from, offer }) => {
+      // If peer exists with prior negotiation, reset it to avoid m-line conflicts
+      if (peers.has(from)) {
+        peers.get(from).pc.close();
+        peers.delete(from);
+      }
       const pc = getOrCreatePeer(from);
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
@@ -162,7 +167,11 @@ const Call = (() => {
     if (!audioEnabled && !videoEnabled) return;
     peerIds.forEach(id => {
       if (id !== _socket.id && !peers.has(id)) {
-        callUser(id);
+        // Only the peer with "higher" ID initiates to avoid simultaneous offers (glare)
+        if (_socket.id > id) {
+          callUser(id);
+        }
+        // The other side will also get our media-state and initiate from their end
       }
     });
   }
