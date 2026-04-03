@@ -16,6 +16,10 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ==================== ROOMS ====================
 
+const ROOM_MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours
+const EMPTY_ROOM_TTL = 60 * 60 * 1000;     // 1 hour after last user leaves
+const MAX_CHAT_HISTORY = 500;
+
 const rooms = new Map();
 
 function generateRoomCode() {
@@ -39,9 +43,15 @@ function createRoom(hostSocket, nickname, avatar) {
       lastUpdate: Date.now(),
       playbackRate: 1
     },
-    createdAt: Date.now()
+    messages: [],
+    createdAt: Date.now(),
+    emptyAt: null
   };
-  room.users.set(hostSocket.id, { id: hostSocket.id, nickname, avatar, joinedAt: Date.now() });
+  room.users.set(hostSocket.id, {
+    id: hostSocket.id, nickname, avatar, joinedAt: Date.now(),
+    currentTime: 0, playing: false, lastPing: Date.now(),
+    hasAudio: false, hasVideo: false
+  });
   rooms.set(code, room);
   return room;
 }
@@ -55,7 +65,12 @@ function getUserList(room) {
     id: u.id,
     nickname: u.nickname,
     avatar: u.avatar,
-    isHost: u.id === room.hostId
+    isHost: u.id === room.hostId,
+    currentTime: u.currentTime || 0,
+    playing: u.playing || false,
+    lastPing: u.lastPing || 0,
+    hasAudio: u.hasAudio || false,
+    hasVideo: u.hasVideo || false
   }));
 }
 
@@ -72,13 +87,35 @@ function getEstimatedTime(room) {
   return ps.currentTime + (Date.now() - ps.lastUpdate) / 1000 * ps.playbackRate;
 }
 
+function saveMessage(room, msg) {
+  room.messages.push(msg);
+  if (room.messages.length > MAX_CHAT_HISTORY) {
+    room.messages = room.messages.slice(-MAX_CHAT_HISTORY);
+  }
+}
+
+function deleteRoom(code) {
+  const room = rooms.get(code);
+  if (!room) return;
+  io.to(code).emit('room-deleted', { reason: 'Комната закрыта' });
+  // Disconnect all sockets from the room
+  io.in(code).socketsLeave(code);
+  rooms.delete(code);
+  console.log(`[ROOM] Room ${code} deleted`);
+}
+
 // ==================== CLEANUP ====================
 
 setInterval(() => {
   const now = Date.now();
   for (const [code, room] of rooms) {
+    // Delete rooms older than 24 hours
+    if (now - room.createdAt > ROOM_MAX_AGE) {
+      deleteRoom(code);
+      continue;
+    }
     // Delete empty rooms after 1 hour
-    if (room.users.size === 0 && room.emptyAt && now - room.emptyAt > 3600000) {
+    if (room.users.size === 0 && room.emptyAt && now - room.emptyAt > EMPTY_ROOM_TTL) {
       rooms.delete(code);
       console.log(`[ROOM] Room ${code} deleted (empty for 1 hour)`);
     }
@@ -103,7 +140,8 @@ io.on('connection', (socket) => {
       users: getUserList(room),
       playlist: room.playlist,
       currentIndex: room.currentIndex,
-      playbackState: room.playbackState
+      playbackState: room.playbackState,
+      messages: room.messages
     });
     console.log(`[ROOM] ${nickname} created room ${room.code}`);
   });
@@ -114,10 +152,14 @@ io.on('connection', (socket) => {
     if (!room) return callback({ success: false, error: 'Комната не найдена' });
     if (currentRoom) leaveRoom(socket);
 
-    room.users.set(socket.id, { id: socket.id, nickname, avatar, joinedAt: Date.now() });
-    room.emptyAt = null; // Room is no longer empty
+    room.users.set(socket.id, {
+      id: socket.id, nickname, avatar, joinedAt: Date.now(),
+      currentTime: 0, playing: false, lastPing: Date.now(),
+      hasAudio: false, hasVideo: false
+    });
+    room.emptyAt = null;
     if (!room.hostId || !room.users.has(room.hostId)) {
-      room.hostId = socket.id; // Become host if previous host left
+      room.hostId = socket.id;
     }
     currentRoom = room.code;
     socket.join(room.code);
@@ -127,11 +169,10 @@ io.on('connection', (socket) => {
       user: { id: socket.id, nickname, avatar, isHost: false },
       users
     });
-    socket.to(room.code).emit('chat-message', {
-      type: 'system',
-      text: `${nickname} присоединился`,
-      timestamp: Date.now()
-    });
+
+    const sysMsg = { type: 'system', text: `${nickname} присоединился`, timestamp: Date.now() };
+    saveMessage(room, sysMsg);
+    socket.to(room.code).emit('chat-message', sysMsg);
 
     callback({
       success: true,
@@ -141,7 +182,8 @@ io.on('connection', (socket) => {
       playlist: room.playlist,
       currentIndex: room.currentIndex,
       playbackState: { ...room.playbackState, currentTime: getEstimatedTime(room) },
-      currentVideo: getCurrentVideo(room)
+      currentVideo: getCurrentVideo(room),
+      messages: room.messages
     });
     console.log(`[ROOM] ${nickname} joined room ${room.code}`);
   });
@@ -153,14 +195,16 @@ io.on('connection', (socket) => {
     const user = room.users.get(socket.id);
     if (!user) return;
 
-    io.to(room.code).emit('chat-message', {
+    const msg = {
       type: 'user',
       userId: socket.id,
       nickname: user.nickname,
       avatar: user.avatar,
       text,
       timestamp: Date.now()
-    });
+    };
+    saveMessage(room, msg);
+    io.to(room.code).emit('chat-message', msg);
   });
 
   // Typing indicator
@@ -172,7 +216,28 @@ io.on('connection', (socket) => {
     socket.to(room.code).emit('user-typing', { nickname: user.nickname });
   });
 
-  // Add video to playlist
+  // ==================== USER STATUS ====================
+
+  socket.on('user-status', ({ currentTime, playing }) => {
+    const room = getRoom(currentRoom);
+    if (!room) return;
+    const user = room.users.get(socket.id);
+    if (!user) return;
+    user.currentTime = currentTime || 0;
+    user.playing = playing || false;
+    user.lastPing = Date.now();
+  });
+
+  // Broadcast all user statuses every 3 seconds
+  // (handled via client requesting it, see 'request-status')
+  socket.on('request-status', () => {
+    const room = getRoom(currentRoom);
+    if (!room) return;
+    socket.emit('room-status', { users: getUserList(room), serverTime: Date.now() });
+  });
+
+  // ==================== PLAYLIST ====================
+
   socket.on('add-video', ({ url, title, platform }, callback) => {
     const room = getRoom(currentRoom);
     if (!room) return;
@@ -180,11 +245,10 @@ io.on('connection', (socket) => {
     const video = { id: uuidv4(), url, title, platform, addedBy: room.users.get(socket.id)?.nickname };
     room.playlist.push(video);
     io.to(room.code).emit('playlist-updated', { playlist: room.playlist });
-    io.to(room.code).emit('chat-message', {
-      type: 'system',
-      text: `${video.addedBy} добавил: ${title}`,
-      timestamp: Date.now()
-    });
+
+    const sysMsg = { type: 'system', text: `${video.addedBy} добавил: ${title}`, timestamp: Date.now() };
+    saveMessage(room, sysMsg);
+    io.to(room.code).emit('chat-message', sysMsg);
 
     if (room.currentIndex === -1) {
       room.currentIndex = 0;
@@ -195,7 +259,6 @@ io.on('connection', (socket) => {
     callback?.({ success: true });
   });
 
-  // Remove video from playlist
   socket.on('remove-video', ({ videoId }) => {
     const room = getRoom(currentRoom);
     if (!room || socket.id !== room.hostId) return;
@@ -216,7 +279,6 @@ io.on('connection', (socket) => {
     io.to(room.code).emit('playlist-updated', { playlist: room.playlist, currentIndex: room.currentIndex });
   });
 
-  // Play video from playlist
   socket.on('play-video-at', ({ index }) => {
     const room = getRoom(currentRoom);
     if (!room) return;
@@ -231,7 +293,8 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Playback sync events
+  // ==================== PLAYBACK SYNC ====================
+
   socket.on('sync-play', ({ currentTime }) => {
     const room = getRoom(currentRoom);
     if (!room) return;
@@ -260,7 +323,6 @@ io.on('connection', (socket) => {
     socket.to(room.code).emit('sync-rate', { rate });
   });
 
-  // Periodic sync check
   socket.on('sync-state', ({ currentTime, playing }) => {
     const room = getRoom(currentRoom);
     if (!room) return;
@@ -268,7 +330,8 @@ io.on('connection', (socket) => {
     socket.to(room.code).emit('sync-state', { currentTime, playing });
   });
 
-  // Reaction
+  // ==================== REACTIONS ====================
+
   socket.on('reaction', ({ emoji }) => {
     const room = getRoom(currentRoom);
     if (!room) return;
@@ -276,7 +339,8 @@ io.on('connection', (socket) => {
     io.to(room.code).emit('reaction', { emoji, nickname: user?.nickname });
   });
 
-  // Next/Prev video
+  // ==================== PLAYLIST NAV ====================
+
   socket.on('next-video', () => {
     const room = getRoom(currentRoom);
     if (!room) return;
@@ -305,7 +369,8 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Transfer host
+  // ==================== HOST CONTROLS ====================
+
   socket.on('transfer-host', ({ userId }) => {
     const room = getRoom(currentRoom);
     if (!room || socket.id !== room.hostId) return;
@@ -314,14 +379,47 @@ io.on('connection', (socket) => {
     const users = getUserList(room);
     io.to(room.code).emit('host-changed', { newHostId: userId, users });
     const newHost = room.users.get(userId);
-    io.to(room.code).emit('chat-message', {
-      type: 'system',
-      text: `${newHost.nickname} теперь хост`,
-      timestamp: Date.now()
+    const sysMsg = { type: 'system', text: `${newHost.nickname} теперь хост`, timestamp: Date.now() };
+    saveMessage(room, sysMsg);
+    io.to(room.code).emit('chat-message', sysMsg);
+  });
+
+  socket.on('delete-room', () => {
+    const room = getRoom(currentRoom);
+    if (!room || socket.id !== room.hostId) return;
+    deleteRoom(room.code);
+    currentRoom = null;
+  });
+
+  // ==================== WEBRTC SIGNALING ====================
+
+  socket.on('call-offer', ({ to, offer }) => {
+    io.to(to).emit('call-offer', { from: socket.id, offer });
+  });
+
+  socket.on('call-answer', ({ to, answer }) => {
+    io.to(to).emit('call-answer', { from: socket.id, answer });
+  });
+
+  socket.on('ice-candidate', ({ to, candidate }) => {
+    io.to(to).emit('ice-candidate', { from: socket.id, candidate });
+  });
+
+  socket.on('media-state', ({ hasAudio, hasVideo }) => {
+    const room = getRoom(currentRoom);
+    if (!room) return;
+    const user = room.users.get(socket.id);
+    if (!user) return;
+    user.hasAudio = hasAudio;
+    user.hasVideo = hasVideo;
+    socket.to(room.code).emit('user-media-state', {
+      userId: socket.id, hasAudio, hasVideo,
+      users: getUserList(room)
     });
   });
 
-  // Leave room
+  // ==================== LEAVE / DISCONNECT ====================
+
   function leaveRoom(sock) {
     const room = getRoom(currentRoom);
     if (!room) { currentRoom = null; return; }
@@ -331,27 +429,22 @@ io.on('connection', (socket) => {
     sock.leave(room.code);
 
     if (room.users.size === 0) {
-      // Don't delete immediately — allow time to rejoin (e.g. page reload)
       room.emptyAt = Date.now();
       console.log(`[ROOM] Room ${room.code} is now empty, will delete in 1 hour if no one rejoins`);
     } else {
       if (room.hostId === sock.id) {
         const firstUser = room.users.values().next().value;
         room.hostId = firstUser.id;
-        io.to(room.code).emit('chat-message', {
-          type: 'system',
-          text: `${firstUser.nickname} теперь хост`,
-          timestamp: Date.now()
-        });
+        const sysMsg = { type: 'system', text: `${firstUser.nickname} теперь хост`, timestamp: Date.now() };
+        saveMessage(room, sysMsg);
+        io.to(room.code).emit('chat-message', sysMsg);
       }
       const users = getUserList(room);
       io.to(room.code).emit('user-left', { userId: sock.id, users, newHostId: room.hostId });
       if (user) {
-        io.to(room.code).emit('chat-message', {
-          type: 'system',
-          text: `${user.nickname} вышел`,
-          timestamp: Date.now()
-        });
+        const sysMsg = { type: 'system', text: `${user.nickname} вышел`, timestamp: Date.now() };
+        saveMessage(room, sysMsg);
+        io.to(room.code).emit('chat-message', sysMsg);
       }
     }
     currentRoom = null;
@@ -369,12 +462,9 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`
   ╔══════════════════════════════════════════╗
-  ║         🎬 WatchTogether v1.0           ║
+  ║       WatchTogether v2.0                 ║
   ║                                          ║
-  ║  Сервер запущен: http://localhost:${PORT}    ║
-  ║                                          ║
-  ║  Для доступа по сети используйте         ║
-  ║  ваш локальный IP адрес                  ║
+  ║  Server: http://localhost:${PORT}            ║
   ╚══════════════════════════════════════════╝
   `);
 });

@@ -9,6 +9,7 @@ const App = (() => {
   let playlist = [];
   let currentIndex = -1;
   let selectedAvatar = '😎';
+  let statusInterval = null;
 
   const AVATARS = ['😎', '🐱', '🐶', '🦊', '🐸', '🤖', '👻', '🎃', '🐼', '🦄', '🐉', '🦋', '🌸', '🍄', '🎮', '🚀'];
 
@@ -29,7 +30,6 @@ const App = (() => {
     const code = params.get('room');
     if (code && code.length === 6) {
       document.getElementById('room-code-input').value = code.toUpperCase();
-      // Always auto-join when URL has room code (use saved or generate nickname)
       const waitForSocket = setInterval(() => {
         if (socket?.connected) {
           clearInterval(waitForSocket);
@@ -60,12 +60,14 @@ const App = (() => {
             currentIndex = res.currentIndex ?? -1;
             renderUsers();
             renderPlaylist();
+            if (res.messages?.length) Chat.loadHistory(res.messages);
             if (res.currentVideo) {
               Player.load(res.currentVideo, Sync.onPlayerStateChange);
               if (res.playbackState?.currentTime > 0) {
                 setTimeout(() => Player.seekTo(res.playbackState.currentTime), 1000);
               }
             }
+            Call.init(socket);
             toast('Переподключились!', 'success');
           } else {
             toast('Комната больше не существует', 'error');
@@ -80,7 +82,12 @@ const App = (() => {
     });
 
     // Room events
-    socket.on('user-joined', ({ user, users: u }) => { users = u; renderUsers(); });
+    socket.on('user-joined', ({ user, users: u }) => {
+      users = u;
+      renderUsers();
+      // If we have audio/video active, connect to new user
+      Call.connectToRoom([user], socket);
+    });
     socket.on('user-left', ({ userId, users: u, newHostId }) => {
       users = u;
       if (newHostId === myId && !isHost) {
@@ -93,6 +100,12 @@ const App = (() => {
       users = u;
       isHost = newHostId === myId;
       renderUsers();
+    });
+
+    // Room deleted
+    socket.on('room-deleted', ({ reason }) => {
+      toast(reason || 'Комната удалена', 'error');
+      leaveRoom();
     });
 
     // Chat events
@@ -129,6 +142,18 @@ const App = (() => {
     socket.on('sync-seek', ({ currentTime }) => Sync.applySeek(currentTime));
     socket.on('sync-rate', ({ rate }) => Sync.applyRate(rate));
     socket.on('sync-state', ({ currentTime, playing }) => Sync.applyState(currentTime, playing));
+
+    // User status updates
+    socket.on('room-status', ({ users: u }) => {
+      users = u;
+      renderUsers();
+    });
+
+    // Media state
+    socket.on('user-media-state', ({ users: u }) => {
+      users = u;
+      renderUsers();
+    });
 
     // Reactions
     socket.on('reaction', ({ emoji, nickname }) => showFloatingReaction(emoji));
@@ -175,11 +200,8 @@ const App = (() => {
     document.getElementById('create-room-btn').addEventListener('click', () => {
       const nickname = getNickname();
       socket.emit('create-room', { nickname, avatar: selectedAvatar }, (res) => {
-        if (res.success) {
-          enterRoom(res);
-        } else {
-          toast(res.error || 'Ошибка создания комнаты', 'error');
-        }
+        if (res.success) enterRoom(res);
+        else toast(res.error || 'Ошибка создания комнаты', 'error');
       });
     });
 
@@ -187,7 +209,6 @@ const App = (() => {
     document.getElementById('room-code-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') joinRoom();
     });
-
     document.getElementById('room-code-input').addEventListener('input', (e) => {
       e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '');
     });
@@ -198,11 +219,8 @@ const App = (() => {
     if (code.length !== 6) return toast('Код комнаты — 6 символов', 'error');
     const nickname = getNickname();
     socket.emit('join-room', { code, nickname, avatar: selectedAvatar }, (res) => {
-      if (res.success) {
-        enterRoom(res);
-      } else {
-        toast(res.error || 'Не удалось войти', 'error');
-      }
+      if (res.success) enterRoom(res);
+      else toast(res.error || 'Не удалось войти', 'error');
     });
   }
 
@@ -215,29 +233,26 @@ const App = (() => {
     playlist = data.playlist || [];
     currentIndex = data.currentIndex ?? -1;
 
-    // Update URL with room code
     window.history.replaceState({}, '', `?room=${roomCode}`);
 
-    // Switch screen
     document.getElementById('lobby').classList.remove('active');
     document.getElementById('room').classList.add('active');
 
-    // Show room code
     document.getElementById('room-code-display').textContent = roomCode;
-
-    // Share box
     document.getElementById('share-code').textContent = roomCode;
     document.getElementById('copy-code-btn').onclick = () => {
       const shareUrl = `${window.location.origin}?room=${roomCode}`;
-      const shareText = `Заходи смотреть вместе!\n${shareUrl}`;
-      navigator.clipboard?.writeText(shareText).then(() => toast('Ссылка скопирована!', 'success'));
+      navigator.clipboard?.writeText(`Заходи смотреть вместе!\n${shareUrl}`).then(() => toast('Ссылка скопирована!', 'success'));
     };
 
-    // Render
     renderUsers();
     renderPlaylist();
 
-    // Load current video if any
+    // Load chat history
+    if (data.messages?.length) Chat.loadHistory(data.messages);
+    Chat.addMessage({ type: 'system', text: `Вы вошли в комнату ${roomCode}` });
+
+    // Load current video
     if (data.currentVideo) {
       Player.load(data.currentVideo, Sync.onPlayerStateChange);
       if (data.playbackState) {
@@ -248,37 +263,51 @@ const App = (() => {
       }
     }
 
-    // Show video area on mobile by default
     showMobilePanel('video');
 
-    Chat.addMessage({ type: 'system', text: `Вы вошли в комнату ${roomCode}` });
+    // Init WebRTC
+    Call.init(socket);
+
+    // Start sending user status every 3 seconds
+    startStatusUpdates();
+
     toast(`Комната: ${roomCode}`, 'success');
   }
 
+  function startStatusUpdates() {
+    stopStatusUpdates();
+    statusInterval = setInterval(() => {
+      if (!socket?.connected || !roomCode) return;
+      const currentTime = Player.getCurrentTime() || 0;
+      const playing = Player.isPlaying() || false;
+      socket.emit('user-status', { currentTime, playing });
+      socket.emit('request-status');
+    }, 3000);
+  }
+
+  function stopStatusUpdates() {
+    if (statusInterval) { clearInterval(statusInterval); statusInterval = null; }
+  }
+
   function initRoomEvents() {
-    // Leave
     document.getElementById('leave-btn').addEventListener('click', leaveRoom);
 
-    // Copy room code
     document.getElementById('room-code-display').addEventListener('click', () => {
       const shareUrl = `${window.location.origin}?room=${roomCode}`;
       navigator.clipboard?.writeText(shareUrl).then(() => toast('Ссылка скопирована!', 'success'));
     });
 
-    // Add video
     document.getElementById('add-video-btn').addEventListener('click', addVideo);
     document.getElementById('video-url-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') addVideo();
     });
 
-    // Reactions
     document.querySelectorAll('.reaction-btn').forEach(btn => {
       btn.addEventListener('click', () => {
         socket.emit('reaction', { emoji: btn.dataset.emoji });
       });
     });
 
-    // Sidebar tabs
     document.querySelectorAll('.sidebar-tab').forEach(tab => {
       tab.addEventListener('click', () => {
         const tabName = tab.dataset.tab;
@@ -287,105 +316,67 @@ const App = (() => {
       });
     });
 
-    // Header buttons
-    document.getElementById('toggle-users-btn').addEventListener('click', () => {
-      switchSidebarTab('users');
-    });
-    document.getElementById('toggle-playlist-btn').addEventListener('click', () => {
-      switchSidebarTab('playlist');
-    });
+    document.getElementById('toggle-users-btn').addEventListener('click', () => switchSidebarTab('users'));
+    document.getElementById('toggle-playlist-btn').addEventListener('click', () => switchSidebarTab('playlist'));
 
-    // Fullscreen & PiP
     document.getElementById('fullscreen-btn')?.addEventListener('click', toggleFullscreen);
     document.getElementById('pip-btn')?.addEventListener('click', togglePiP);
 
-    // Mobile nav
+    // Delete room button
+    document.getElementById('delete-room-btn')?.addEventListener('click', () => {
+      if (confirm('Закрыть комнату для всех?')) {
+        socket.emit('delete-room');
+      }
+    });
+
     document.querySelectorAll('.mobile-nav-btn').forEach(btn => {
-      btn.addEventListener('click', () => {
-        showMobilePanel(btn.dataset.panel);
-      });
+      btn.addEventListener('click', () => showMobilePanel(btn.dataset.panel));
     });
   }
 
   function toggleFullscreen() {
     const container = document.getElementById('video-container');
-    if (document.fullscreenElement) {
-      document.exitFullscreen();
-    } else {
-      container.requestFullscreen().catch(() => {});
-    }
+    if (document.fullscreenElement) document.exitFullscreen();
+    else container.requestFullscreen().catch(() => {});
   }
 
   function togglePiP() {
-    // Try HTML5 video PiP first
     const html5 = document.getElementById('html5-player');
-    if (html5 && html5.src && !html5.paused !== undefined) {
-      if (document.pictureInPictureElement) {
-        document.exitPictureInPicture().catch(() => {});
-      } else {
-        html5.requestPictureInPicture().catch(() => {});
-      }
+    if (html5 && html5.src) {
+      if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
+      else html5.requestPictureInPicture().catch(() => {});
       return;
     }
-
-    // For YouTube iframe — use Document PiP API (Chrome 116+)
-    if ('documentPictureInPicture' in window) {
-      openDocumentPiP();
-      return;
-    }
-
-    // Fallback: try to grab video from YouTube iframe
-    try {
-      const iframe = document.getElementById('youtube-player');
-      if (iframe?.tagName === 'IFRAME') {
-        // Can't access cross-origin iframe video, use Document PiP
-        toast('PiP: нажми правой кнопкой на видео → Картинка в картинке', 'info');
-      }
-    } catch(e) {}
+    if ('documentPictureInPicture' in window) { openDocumentPiP(); return; }
+    toast('PiP: правой кнопкой на видео -> Картинка в картинке', 'info');
   }
 
   async function openDocumentPiP() {
     try {
-      const container = document.getElementById('video-container');
-      const pipWindow = await documentPictureInPicture.requestWindow({
-        width: 480,
-        height: 270
-      });
-
-      // Copy styles
+      const pipWindow = await documentPictureInPicture.requestWindow({ width: 480, height: 270 });
       const styles = document.querySelectorAll('link[rel="stylesheet"], style');
       styles.forEach(s => pipWindow.document.head.appendChild(s.cloneNode(true)));
-
-      // Add base styles for PiP window
       const style = pipWindow.document.createElement('style');
-      style.textContent = 'body { margin: 0; background: #000; overflow: hidden; } .video-container { position: fixed; inset: 0; border-radius: 0; }';
+      style.textContent = 'body{margin:0;background:#000;overflow:hidden}.video-container{position:fixed;inset:0;border-radius:0}';
       pipWindow.document.head.appendChild(style);
-
-      // Move video container to PiP
       const playerWrapper = document.getElementById('player-wrapper');
       const chatOverlay = document.getElementById('chat-overlay');
       const reactionsOverlay = document.getElementById('reactions-overlay');
-
       const pipContainer = pipWindow.document.createElement('div');
       pipContainer.className = 'video-container';
-      pipContainer.id = 'video-container';
       pipContainer.appendChild(playerWrapper);
       pipContainer.appendChild(chatOverlay);
       pipContainer.appendChild(reactionsOverlay);
       pipWindow.document.body.appendChild(pipContainer);
-
-      // On PiP close — move elements back
       pipWindow.addEventListener('pagehide', () => {
-        const origContainer = document.getElementById('video-container');
-        if (origContainer) {
-          origContainer.insertBefore(reactionsOverlay, origContainer.querySelector('.video-overlay-btns'));
-          origContainer.insertBefore(chatOverlay, reactionsOverlay);
-          origContainer.insertBefore(playerWrapper, chatOverlay);
+        const orig = document.getElementById('video-container');
+        if (orig) {
+          orig.insertBefore(reactionsOverlay, orig.querySelector('.video-overlay-btns'));
+          orig.insertBefore(chatOverlay, reactionsOverlay);
+          orig.insertBefore(playerWrapper, chatOverlay);
         }
       });
-    } catch(e) {
-      toast('PiP недоступен в этом браузере', 'info');
-    }
+    } catch(e) { toast('PiP недоступен', 'info'); }
   }
 
   function switchSidebarTab(tabName) {
@@ -396,17 +387,14 @@ const App = (() => {
   function showMobilePanel(panel) {
     const sidebar = document.getElementById('sidebar');
     const videoArea = document.querySelector('.video-area');
-
     document.querySelectorAll('.mobile-nav-btn').forEach(b => b.classList.toggle('active', b.dataset.panel === panel));
-
     if (panel === 'video') {
       sidebar.classList.remove('show');
       videoArea.classList.add('show');
     } else {
       videoArea.classList.remove('show');
       sidebar.classList.add('show');
-      const tabMap = { chat: 'chat', playlist: 'playlist', users: 'users' };
-      switchSidebarTab(tabMap[panel] || 'chat');
+      switchSidebarTab({ chat: 'chat', playlist: 'playlist', users: 'users' }[panel] || 'chat');
     }
   }
 
@@ -414,15 +402,14 @@ const App = (() => {
     socket.emit('leave-room');
     Player.unload();
     Chat.clear();
+    Call.destroy();
+    stopStatusUpdates();
     roomCode = null;
     isHost = false;
     users = [];
     playlist = [];
     currentIndex = -1;
-
-    // Clear URL
     window.history.replaceState({}, '', '/');
-
     document.getElementById('room').classList.remove('active');
     document.getElementById('lobby').classList.add('active');
   }
@@ -433,20 +420,21 @@ const App = (() => {
     const input = document.getElementById('video-url-input');
     const url = input.value.trim();
     if (!url) return;
-
     const parsed = Player.parseVideoUrl(url);
     if (!parsed) return toast('Не удалось распознать ссылку', 'error');
-
-    socket.emit('add-video', {
-      url: parsed.url,
-      title: parsed.title,
-      platform: parsed.platform
-    }, (res) => {
+    socket.emit('add-video', { url: parsed.url, title: parsed.title, platform: parsed.platform }, (res) => {
       if (res?.success) input.value = '';
     });
   }
 
   // ==================== RENDER ====================
+
+  function formatTime(seconds) {
+    if (!seconds || seconds < 0) return '0:00';
+    const m = Math.floor(seconds / 60);
+    const s = Math.floor(seconds % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+  }
 
   function renderUsers() {
     const count = document.getElementById('users-count').querySelector('span');
@@ -454,13 +442,30 @@ const App = (() => {
 
     const container = document.getElementById('users-list');
     container.innerHTML = '';
+    const now = Date.now();
+
     users.forEach(user => {
       const div = document.createElement('div');
       div.className = 'user-item';
       const isMe = user.id === myId;
+
+      // Connection status
+      const pingAge = now - (user.lastPing || 0);
+      let statusClass = 'status-online';
+      let statusText = 'онлайн';
+      if (pingAge > 15000) { statusClass = 'status-offline'; statusText = 'оффлайн'; }
+      else if (pingAge > 6000) { statusClass = 'status-lagging'; statusText = 'плохая связь'; }
+
+      // Badges
       let badges = '';
       if (user.isHost) badges += '<span class="user-item-badge badge-host">хост</span> ';
-      if (isMe) badges += '<span class="user-item-badge badge-you">вы</span>';
+      if (isMe) badges += '<span class="user-item-badge badge-you">вы</span> ';
+      if (user.hasAudio) badges += '<span class="user-item-badge badge-mic">MIC</span> ';
+      if (user.hasVideo) badges += '<span class="user-item-badge badge-cam">CAM</span> ';
+
+      // Playback info
+      const playbackIcon = user.playing ? '▶' : '⏸';
+      const timeStr = formatTime(user.currentTime);
 
       let actions = '';
       if (isHost && !isMe) {
@@ -473,16 +478,33 @@ const App = (() => {
         <div class="user-item-avatar">${user.avatar || '👤'}</div>
         <div class="user-item-info">
           <div class="user-item-name">${escapeHtml(user.nickname)} ${badges}</div>
+          <div class="user-item-status">
+            <span class="status-dot ${statusClass}"></span>
+            <span class="status-text">${statusText}</span>
+            <span class="playback-info">${playbackIcon} ${timeStr}</span>
+          </div>
         </div>
         ${actions}
       `;
       container.appendChild(div);
     });
 
-    container.querySelectorAll('[data-action="transfer-host"]').forEach(btn => {
-      btn.addEventListener('click', () => {
-        socket.emit('transfer-host', { userId: btn.dataset.userId });
+    // Delete room button (host only)
+    if (isHost) {
+      const deleteBtn = document.createElement('button');
+      deleteBtn.id = 'delete-room-btn';
+      deleteBtn.className = 'btn btn-sm';
+      deleteBtn.style.cssText = 'margin: 12px 8px; width: calc(100% - 16px); background: rgba(240,108,142,0.15); color: var(--danger); border: 1px solid rgba(240,108,142,0.3);';
+      deleteBtn.textContent = 'Закрыть комнату';
+      deleteBtn.addEventListener('click', () => {
+        if (confirm('Закрыть комнату для всех?')) socket.emit('delete-room');
       });
+      container.appendChild(deleteBtn);
+    }
+
+    // Transfer host buttons
+    container.querySelectorAll('[data-action="transfer-host"]').forEach(btn => {
+      btn.addEventListener('click', () => socket.emit('transfer-host', { userId: btn.dataset.userId }));
     });
   }
 
@@ -496,9 +518,7 @@ const App = (() => {
     playlist.forEach((video, idx) => {
       const div = document.createElement('div');
       div.className = 'playlist-item' + (idx === currentIndex ? ' active' : '');
-
       const platformClass = `platform-${video.platform || 'direct'}`;
-
       div.innerHTML = `
         <div class="playlist-item-num">${idx + 1}</div>
         <div class="playlist-item-info">
@@ -510,19 +530,14 @@ const App = (() => {
         </div>
         ${isHost ? `<button class="playlist-item-remove" data-id="${video.id}" title="Удалить">✕</button>` : ''}
       `;
-
       div.addEventListener('click', (e) => {
         if (e.target.closest('.playlist-item-remove')) return;
         socket.emit('play-video-at', { index: idx });
       });
-
       container.appendChild(div);
     });
-
     container.querySelectorAll('.playlist-item-remove').forEach(btn => {
-      btn.addEventListener('click', () => {
-        socket.emit('remove-video', { videoId: btn.dataset.id });
-      });
+      btn.addEventListener('click', () => socket.emit('remove-video', { videoId: btn.dataset.id }));
     });
   }
 
@@ -556,7 +571,6 @@ const App = (() => {
   }
 
   // ==================== START ====================
-
   document.addEventListener('DOMContentLoaded', init);
 
   return {

@@ -582,6 +582,24 @@ input[type="text"]:focus {
 }
 .badge-host { background: var(--accent-dim); color: var(--accent); }
 .badge-you { background: rgba(52,217,160,0.12); color: var(--success); }
+.badge-mic { background: rgba(52,217,160,0.12); color: var(--success); font-size: 9px; }
+.badge-cam { background: rgba(124,108,240,0.12); color: var(--accent); font-size: 9px; }
+
+.user-item-status {
+  display: flex; align-items: center; gap: 6px;
+  margin-top: 3px; font-size: 12px; color: var(--text-muted);
+}
+.status-dot {
+  width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0;
+}
+.status-online { background: var(--success); box-shadow: 0 0 6px rgba(52,217,160,0.5); }
+.status-lagging { background: var(--warning); box-shadow: 0 0 6px rgba(240,200,108,0.5); }
+.status-offline { background: var(--danger); box-shadow: 0 0 6px rgba(240,108,142,0.4); }
+.status-text { font-size: 11px; }
+.playback-info {
+  margin-left: auto; font-size: 11px; font-weight: 600;
+  color: var(--text-secondary); font-variant-numeric: tabular-nums;
+}
 
 .user-item-actions { display: flex; gap: 4px; }
 .user-item-actions button {
@@ -717,3 +735,44 @@ input[type="text"]:focus {
 }
 .share-box-hint { flex: 1; font-size: 12px; color: var(--text-muted); line-height: 1.4; }
 .share-box .btn { flex-shrink: 0; }
+
+/* ==================== CALL BUTTONS ==================== */
+.call-btn { position: relative; }
+.call-btn.active { color: var(--success); background: rgba(52,217,160,0.12); }
+.call-btn.active::after {
+  content: ''; position: absolute; top: 6px; right: 6px;
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--success); box-shadow: 0 0 6px rgba(52,217,160,0.6);
+}
+
+/* ==================== CALL VIDEO GRID ==================== */
+.call-grid {
+  position: fixed; top: calc(var(--header-height) + 8px); right: 8px;
+  display: flex; flex-wrap: wrap; gap: 6px;
+  z-index: 50; max-width: 320px;
+  pointer-events: none;
+}
+.call-grid.has-streams { pointer-events: auto; }
+
+.call-video-item {
+  position: relative; width: 150px; height: 112px;
+  border-radius: 10px; overflow: hidden;
+  background: #000; border: 1px solid var(--border-light);
+  box-shadow: var(--shadow);
+}
+.call-video-item video {
+  width: 100%; height: 100%; object-fit: cover;
+}
+.call-video-label {
+  position: absolute; bottom: 4px; left: 6px;
+  font-size: 10px; font-weight: 700; color: #fff;
+  background: rgba(0,0,0,0.6); padding: 1px 6px;
+  border-radius: 4px;
+}
+
+/* ==================== CHAT HISTORY SEPARATOR ==================== */
+.chat-msg-separator {
+  text-align: center; color: var(--text-muted); font-size: 11px;
+  padding: 8px 0; margin: 4px 0;
+  border-top: 1px dashed var(--border-light);
+}

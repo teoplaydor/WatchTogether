@@ -77,7 +77,22 @@ const Chat = (() => {
     chatInput.focus();
   }
 
-  function addMessage(msg) {
+  // Load chat history from server on room join
+  function loadHistory(messages) {
+    if (!messagesContainer || !messages?.length) return;
+    messagesContainer.innerHTML = '';
+    messages.forEach(msg => addMessage(msg, true));
+
+    // Add separator
+    const sep = document.createElement('div');
+    sep.className = 'chat-msg-separator';
+    sep.textContent = '— история чата —';
+    messagesContainer.appendChild(sep);
+
+    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+  }
+
+  function addMessage(msg, isHistory) {
     const div = document.createElement('div');
 
     if (msg.type === 'system') {
@@ -96,19 +111,19 @@ const Chat = (() => {
         <div class="msg-text">${escapeHtml(msg.text)}</div>
       `;
 
-      // Show floating overlay on video
-      showChatOverlay(msg);
+      // Show floating overlay only for live messages (not history)
+      if (!isHistory) showChatOverlay(msg);
     }
 
     messagesContainer.appendChild(div);
-    messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    if (!isHistory) {
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+    }
 
-    while (messagesContainer.children.length > 300) {
+    while (messagesContainer.children.length > 500) {
       messagesContainer.removeChild(messagesContainer.firstChild);
     }
   }
-
-  // ---- Floating chat overlay on video ----
 
   function showChatOverlay(msg) {
     const overlay = document.getElementById('chat-overlay');
@@ -119,12 +134,10 @@ const Chat = (() => {
     el.innerHTML = `<span class="chat-overlay-name">${escapeHtml(msg.nickname)}</span> ${escapeHtml(msg.text)}`;
     overlay.appendChild(el);
 
-    // Limit visible messages
     while (overlay.children.length > MAX_OVERLAY_MSGS) {
       overlay.removeChild(overlay.firstChild);
     }
 
-    // Remove after animation
     setTimeout(() => el.remove(), 5000);
   }
 
@@ -146,5 +159,5 @@ const Chat = (() => {
     return div.innerHTML;
   }
 
-  return { init, addMessage, showTyping, clear };
+  return { init, addMessage, loadHistory, showTyping, clear };
 })();
