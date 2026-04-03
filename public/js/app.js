@@ -155,6 +155,11 @@ const App = (() => {
       renderUsers();
     });
 
+    // Call peers list (response to request-call-peers)
+    socket.on('call-peers', (peerIds) => {
+      Call.handleCallPeers(peerIds);
+    });
+
     // Reactions
     socket.on('reaction', ({ emoji, nickname }) => showFloatingReaction(emoji));
   }

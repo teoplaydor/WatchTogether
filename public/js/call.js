@@ -9,20 +9,27 @@ const Call = (() => {
   let localStream = null;
   let audioEnabled = false;
   let videoEnabled = false;
+  let _socket = null;
   const peers = new Map(); // peerId -> { pc: RTCPeerConnection, stream: MediaStream }
 
   function init(socket) {
+    _socket = socket;
+
     socket.on('call-offer', async ({ from, offer }) => {
-      const pc = getOrCreatePeer(from, socket);
-      await pc.setRemoteDescription(new RTCSessionDescription(offer));
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-      socket.emit('call-answer', { to: from, answer });
+      const pc = getOrCreatePeer(from);
+      try {
+        await pc.setRemoteDescription(new RTCSessionDescription(offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socket.emit('call-answer', { to: from, answer });
+      } catch(e) { console.warn('call-offer error', e); }
     });
 
     socket.on('call-answer', async ({ from, answer }) => {
       const peer = peers.get(from);
-      if (peer) await peer.pc.setRemoteDescription(new RTCSessionDescription(answer));
+      if (peer) {
+        try { await peer.pc.setRemoteDescription(new RTCSessionDescription(answer)); } catch(e) {}
+      }
     });
 
     socket.on('ice-candidate', async ({ from, candidate }) => {
@@ -36,24 +43,41 @@ const Call = (() => {
       removePeer(userId);
     });
 
+    // When another user enables their camera/mic — connect to them
+    socket.on('user-media-state', ({ userId, hasAudio, hasVideo }) => {
+      if (userId === socket.id) return;
+      if ((hasAudio || hasVideo) && (audioEnabled || videoEnabled)) {
+        // They turned on media and we have media — ensure peer connection
+        if (!peers.has(userId)) {
+          callUser(userId);
+        }
+      }
+    });
+
     // Buttons
-    document.getElementById('mic-btn')?.addEventListener('click', () => toggleAudio(socket));
-    document.getElementById('cam-btn')?.addEventListener('click', () => toggleVideo(socket));
+    document.getElementById('mic-btn')?.addEventListener('click', () => toggleAudio());
+    document.getElementById('cam-btn')?.addEventListener('click', () => toggleVideo());
   }
 
-  function getOrCreatePeer(peerId, socket) {
+  function getOrCreatePeer(peerId) {
     if (peers.has(peerId)) return peers.get(peerId).pc;
 
     const pc = new RTCPeerConnection({ iceServers: ICE_SERVERS });
 
     pc.onicecandidate = (e) => {
-      if (e.candidate) socket.emit('ice-candidate', { to: peerId, candidate: e.candidate });
+      if (e.candidate) _socket.emit('ice-candidate', { to: peerId, candidate: e.candidate });
     };
 
     pc.ontrack = (e) => {
       const peer = peers.get(peerId);
       if (peer) peer.stream = e.streams[0];
       renderCallGrid();
+    };
+
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+        removePeer(peerId);
+      }
     };
 
     // Add local tracks if we have them
@@ -78,11 +102,9 @@ const Call = (() => {
     try {
       if (localStream) {
         localStream.getTracks().forEach(t => t.stop());
-      }
-      if (!audio && !video) {
         localStream = null;
-        return;
       }
+      if (!audio && !video) return true;
       localStream = await navigator.mediaDevices.getUserMedia({ audio, video });
       return true;
     } catch(e) {
@@ -91,22 +113,22 @@ const Call = (() => {
     }
   }
 
-  async function toggleAudio(socket) {
+  async function toggleAudio() {
     audioEnabled = !audioEnabled;
     const ok = await startMedia(audioEnabled, videoEnabled);
-    if (ok === false && audioEnabled) { audioEnabled = false; return; }
+    if (!ok && audioEnabled) { audioEnabled = false; return; }
     updateBtn('mic-btn', audioEnabled);
-    broadcastMediaState(socket);
-    reconnectAllPeers(socket);
+    _socket.emit('media-state', { hasAudio: audioEnabled, hasVideo: videoEnabled });
+    await connectToAllUsers();
   }
 
-  async function toggleVideo(socket) {
+  async function toggleVideo() {
     videoEnabled = !videoEnabled;
     const ok = await startMedia(audioEnabled, videoEnabled);
-    if (ok === false && videoEnabled) { videoEnabled = false; return; }
+    if (!ok && videoEnabled) { videoEnabled = false; return; }
     updateBtn('cam-btn', videoEnabled);
-    broadcastMediaState(socket);
-    reconnectAllPeers(socket);
+    _socket.emit('media-state', { hasAudio: audioEnabled, hasVideo: videoEnabled });
+    await connectToAllUsers();
     renderCallGrid();
   }
 
@@ -115,46 +137,69 @@ const Call = (() => {
     if (btn) btn.classList.toggle('active', active);
   }
 
-  function broadcastMediaState(socket) {
-    socket.emit('media-state', { hasAudio: audioEnabled, hasVideo: videoEnabled });
-  }
+  // Connect to all other users in the room
+  async function connectToAllUsers() {
+    if (!audioEnabled && !videoEnabled) {
+      // Turned off all media — close all peers
+      for (const [id, peer] of peers) {
+        peer.pc.close();
+      }
+      peers.clear();
+      renderCallGrid();
+      return;
+    }
 
-  async function reconnectAllPeers(socket) {
-    // Re-add tracks to all existing peers and renegotiate
+    // Get current user list from App
+    const userList = document.querySelectorAll('.user-item');
+    // We also need socket IDs — use the stored users array approach
+    // Emit request to server for current users, but simpler: just re-offer to existing peers
+    // AND create new connections via the server
+
+    // First: update tracks on existing peers
     for (const [peerId, peer] of peers) {
       const senders = peer.pc.getSenders();
-      // Remove old tracks
       senders.forEach(s => { try { peer.pc.removeTrack(s); } catch(e) {} });
-      // Add new tracks
       if (localStream) {
         localStream.getTracks().forEach(track => peer.pc.addTrack(track, localStream));
       }
-      // Renegotiate
       try {
         const offer = await peer.pc.createOffer();
         await peer.pc.setLocalDescription(offer);
-        socket.emit('call-offer', { to: peerId, offer });
+        _socket.emit('call-offer', { to: peerId, offer });
       } catch(e) {}
     }
+
+    // Second: broadcast that we have media — server will notify others
+    // Others will connect to us via 'user-media-state' handler
+    // But we also need to initiate to users who already have media
+    // Request room status to get user IDs
+    _socket.emit('request-call-peers');
   }
 
-  // Call a specific user (initiate connection)
-  async function callUser(peerId, socket) {
-    const pc = getOrCreatePeer(peerId, socket);
+  // Called when we get the list of peers who have media active
+  function handleCallPeers(peerIds) {
+    if (!audioEnabled && !videoEnabled) return;
+    peerIds.forEach(id => {
+      if (id !== _socket.id && !peers.has(id)) {
+        callUser(id);
+      }
+    });
+  }
+
+  async function callUser(peerId) {
+    const pc = getOrCreatePeer(peerId);
     try {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
-      socket.emit('call-offer', { to: peerId, offer });
-    } catch(e) {}
+      _socket.emit('call-offer', { to: peerId, offer });
+    } catch(e) { console.warn('callUser error', e); }
   }
 
-  // Connect to all users in the room
-  function connectToRoom(users, socket) {
-    const myId = socket.id;
+  // Connect to specific users (called on user-joined)
+  function connectToRoom(users) {
+    if (!audioEnabled && !videoEnabled) return;
     users.forEach(u => {
-      if (u.id !== myId && (audioEnabled || videoEnabled)) {
-        callUser(u.id, socket);
-      }
+      if (u.id !== _socket?.id) callUser(u.id);
     });
   }
 
@@ -171,14 +216,11 @@ const Call = (() => {
       grid.appendChild(localEl);
     }
 
-    // Remote videos
+    // Remote videos/audio
     for (const [peerId, peer] of peers) {
-      if (peer.stream) {
-        const hasVideo = peer.stream.getVideoTracks().length > 0;
-        if (hasVideo || peer.stream.getAudioTracks().length > 0) {
-          const el = createVideoEl('', peer.stream, false);
-          grid.appendChild(el);
-        }
+      if (peer.stream && peer.stream.getTracks().length > 0) {
+        const el = createVideoEl('', peer.stream, false);
+        grid.appendChild(el);
       }
     }
 
@@ -219,5 +261,5 @@ const Call = (() => {
     renderCallGrid();
   }
 
-  return { init, connectToRoom, destroy, renderCallGrid };
+  return { init, connectToRoom, handleCallPeers, destroy, renderCallGrid };
 })();

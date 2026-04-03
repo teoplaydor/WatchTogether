@@ -405,6 +405,18 @@ io.on('connection', (socket) => {
     io.to(to).emit('ice-candidate', { from: socket.id, candidate });
   });
 
+  socket.on('request-call-peers', () => {
+    const room = getRoom(currentRoom);
+    if (!room) return;
+    const peerIds = [];
+    for (const [id, u] of room.users) {
+      if (id !== socket.id && (u.hasAudio || u.hasVideo)) {
+        peerIds.push(id);
+      }
+    }
+    socket.emit('call-peers', peerIds);
+  });
+
   socket.on('media-state', ({ hasAudio, hasVideo }) => {
     const room = getRoom(currentRoom);
     if (!room) return;
