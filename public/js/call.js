@@ -48,20 +48,23 @@ const Call = (() => {
       removePeer(userId);
     });
 
-    // When another user enables their camera/mic — connect to them
+    // When another user enables their camera/mic — always connect to receive their stream
     socket.on('user-media-state', ({ userId, hasAudio, hasVideo }) => {
       if (userId === socket.id) return;
-      if ((hasAudio || hasVideo) && (audioEnabled || videoEnabled)) {
-        // They turned on media and we have media — ensure peer connection
-        if (!peers.has(userId)) {
-          callUser(userId);
-        }
+      if ((hasAudio || hasVideo) && !peers.has(userId)) {
+        callUser(userId);
+      }
+      if (!hasAudio && !hasVideo) {
+        removePeer(userId);
       }
     });
 
     // Buttons
     document.getElementById('mic-btn')?.addEventListener('click', () => toggleAudio());
     document.getElementById('cam-btn')?.addEventListener('click', () => toggleVideo());
+
+    // On init, check if anyone already has media active
+    socket.emit('request-call-peers');
   }
 
   function getOrCreatePeer(peerId) {
@@ -164,14 +167,10 @@ const Call = (() => {
 
   // Called when we get the list of peers who have media active
   function handleCallPeers(peerIds) {
-    if (!audioEnabled && !videoEnabled) return;
+    // Always connect to peers with active media (to receive their stream)
     peerIds.forEach(id => {
       if (id !== _socket.id && !peers.has(id)) {
-        // Only the peer with "higher" ID initiates to avoid simultaneous offers (glare)
-        if (_socket.id > id) {
-          callUser(id);
-        }
-        // The other side will also get our media-state and initiate from their end
+        callUser(id);
       }
     });
   }
