@@ -14,6 +14,9 @@ const io = new Server(server, {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
+// Keep-alive endpoint
+app.get('/ping', (req, res) => res.json({ ok: true, rooms: rooms.size, uptime: process.uptime() }));
+
 // ==================== ROOMS ====================
 
 const ROOM_MAX_AGE = 24 * 60 * 60 * 1000; // 24 hours
@@ -472,11 +475,15 @@ io.on('connection', (socket) => {
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`
-  ╔══════════════════════════════════════════╗
-  ║       WatchTogether v2.0                 ║
-  ║                                          ║
-  ║  Server: http://localhost:${PORT}            ║
-  ╚══════════════════════════════════════════╝
-  `);
+  console.log(`[SERVER] WatchTogether v2.0 running on port ${PORT}`);
+
+  // Self-ping every 10 minutes to prevent Render free tier sleep
+  // Only when there are active rooms
+  setInterval(() => {
+    if (rooms.size > 0) {
+      const url = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+      fetch(`${url}/ping`).catch(() => {});
+      console.log(`[KEEPALIVE] Pinged self, ${rooms.size} active rooms`);
+    }
+  }, 10 * 60 * 1000);
 });

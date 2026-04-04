@@ -770,6 +770,35 @@ input[type="text"]:focus {
   border-radius: 4px;
 }
 
+/* ==================== CHAT USERS BAR ==================== */
+.chat-users-bar {
+  display: flex; gap: 6px; padding: 8px 12px;
+  overflow-x: auto; flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  scrollbar-width: none;
+}
+.chat-users-bar::-webkit-scrollbar { display: none; }
+.chat-users-bar:empty { display: none; }
+
+.chat-user-chip {
+  display: flex; align-items: center; gap: 4px;
+  padding: 4px 10px; border-radius: 20px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  font-size: 11px; white-space: nowrap;
+  flex-shrink: 0;
+}
+.chat-user-chip.is-me {
+  background: var(--accent-dim);
+  border-color: rgba(124,108,240,0.2);
+}
+.chip-avatar { font-size: 14px; }
+.chip-name { font-weight: 600; max-width: 60px; overflow: hidden; text-overflow: ellipsis; }
+.chip-time {
+  color: var(--text-muted); font-size: 10px; font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
 /* ==================== CHAT HISTORY SEPARATOR ==================== */
 .chat-msg-separator {
   text-align: center; color: var(--text-muted); font-size: 11px;

@@ -147,12 +147,14 @@ const App = (() => {
     socket.on('room-status', ({ users: u }) => {
       users = u;
       renderUsers();
+      renderChatUsersBar();
     });
 
     // Media state
     socket.on('user-media-state', ({ users: u }) => {
       users = u;
       renderUsers();
+      renderChatUsersBar();
     });
 
     // Call peers list (response to request-call-peers)
@@ -279,8 +281,11 @@ const App = (() => {
     toast(`Комната: ${roomCode}`, 'success');
   }
 
+  let keepAliveInterval = null;
+
   function startStatusUpdates() {
     stopStatusUpdates();
+    // User status every 3s
     statusInterval = setInterval(() => {
       if (!socket?.connected || !roomCode) return;
       const currentTime = Player.getCurrentTime() || 0;
@@ -288,10 +293,15 @@ const App = (() => {
       socket.emit('user-status', { currentTime, playing });
       socket.emit('request-status');
     }, 3000);
+    // Keep-alive ping every 5 min to prevent Render sleep
+    keepAliveInterval = setInterval(() => {
+      fetch('/ping').catch(() => {});
+    }, 5 * 60 * 1000);
   }
 
   function stopStatusUpdates() {
     if (statusInterval) { clearInterval(statusInterval); statusInterval = null; }
+    if (keepAliveInterval) { clearInterval(keepAliveInterval); keepAliveInterval = null; }
   }
 
   function initRoomEvents() {
@@ -439,6 +449,27 @@ const App = (() => {
     const m = Math.floor(seconds / 60);
     const s = Math.floor(seconds % 60);
     return `${m}:${s.toString().padStart(2, '0')}`;
+  }
+
+  function renderChatUsersBar() {
+    const bar = document.getElementById('chat-users-bar');
+    if (!bar) return;
+    const now = Date.now();
+    bar.innerHTML = users.map(u => {
+      const pingAge = now - (u.lastPing || 0);
+      let dotClass = 'status-online';
+      if (pingAge > 15000) dotClass = 'status-offline';
+      else if (pingAge > 6000) dotClass = 'status-lagging';
+      const playIcon = u.playing ? '▶' : '⏸';
+      const time = formatTime(u.currentTime);
+      const isMe = u.id === myId;
+      return `<div class="chat-user-chip${isMe ? ' is-me' : ''}" title="${u.nickname}">
+        <span class="status-dot ${dotClass}"></span>
+        <span class="chip-avatar">${u.avatar || '👤'}</span>
+        <span class="chip-name">${escapeHtml(u.nickname)}</span>
+        <span class="chip-time">${playIcon}${time}</span>
+      </div>`;
+    }).join('');
   }
 
   function renderUsers() {
