@@ -16,7 +16,7 @@ const Call = (() => {
     if (serverIceServers) iceServers = serverIceServers;
 
     socket.on('call-offer', async ({ from, offer }) => {
-      // Reset existing peer to avoid m-line conflicts
+      console.log('[CALL] Received offer from', from);
       if (peers.has(from)) { peers.get(from).pc.close(); peers.delete(from); }
       const pc = getOrCreatePeer(from);
       try {
@@ -24,7 +24,8 @@ const Call = (() => {
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         socket.emit('call-answer', { to: from, answer });
-      } catch(e) { console.warn('call-offer error', e); }
+        console.log('[CALL] Sent answer to', from);
+      } catch(e) { console.warn('[CALL] call-offer error', e); }
     });
 
     socket.on('call-answer', async ({ from, answer }) => {
@@ -39,11 +40,12 @@ const Call = (() => {
 
     socket.on('user-left', ({ userId }) => removePeer(userId));
 
-    // When another user enables media — connect to receive
+    // When another user enables media — only lower ID initiates to prevent glare
     socket.on('user-media-state', ({ userId, hasAudio, hasVideo, hasScreen }) => {
       if (userId === socket.id) return;
       if ((hasAudio || hasVideo || hasScreen) && !peers.has(userId)) {
-        callUser(userId);
+        if (socket.id < userId) callUser(userId);
+        // else: wait for their offer to arrive via call-offer handler
       }
       if (!hasAudio && !hasVideo && !hasScreen) {
         removePeer(userId);
@@ -83,7 +85,11 @@ const Call = (() => {
       renderCallGrid();
     };
 
+    pc.oniceconnectionstatechange = () => {
+      console.log(`[CALL] ICE state with ${peerId}: ${pc.iceConnectionState}`);
+    };
     pc.onconnectionstatechange = () => {
+      console.log(`[CALL] Connection state with ${peerId}: ${pc.connectionState}`);
       if (pc.connectionState === 'failed') removePeer(peerId);
     };
 
@@ -156,12 +162,17 @@ const Call = (() => {
   async function reconnectPeers() {
     for (const [, peer] of peers) peer.pc.close();
     peers.clear();
+    // Both sides request peers; handleCallPeers decides who initiates
     _socket?.emit('request-call-peers');
+    // Also broadcast media state so the other side knows to request peers too
   }
 
   function handleCallPeers(peerIds) {
     peerIds.forEach(id => {
-      if (id !== _socket?.id && !peers.has(id)) callUser(id);
+      if (id !== _socket?.id && !peers.has(id)) {
+        // Only initiate if our ID is lower (prevents simultaneous offers / glare)
+        if (_socket.id < id) callUser(id);
+      }
     });
   }
 
