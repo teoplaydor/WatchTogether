@@ -287,7 +287,6 @@ const App = (() => {
   async function toggleScreenShare() {
     const btn = document.getElementById('screen-btn');
     if (btn.classList.contains('active')) {
-      // Stop screen share
       Call.stopScreenShare();
       btn.classList.remove('active');
       socket.emit('media-state', { hasAudio: false, hasVideo: false, hasScreen: false });
@@ -295,7 +294,7 @@ const App = (() => {
       try {
         await Call.startScreenShare();
         btn.classList.add('active');
-        socket.emit('media-state', { hasAudio: false, hasVideo: false, hasScreen: true });
+        // media-state emitted inside startScreenShare
       } catch(e) {
         toast('Не удалось начать демонстрацию', 'error');
       }

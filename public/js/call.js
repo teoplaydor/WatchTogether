@@ -48,13 +48,13 @@ const Call = (() => {
       removePeer(userId);
     });
 
-    // When another user enables their camera/mic — always connect to receive their stream
-    socket.on('user-media-state', ({ userId, hasAudio, hasVideo }) => {
+    // When another user enables their camera/mic/screen — always connect to receive their stream
+    socket.on('user-media-state', ({ userId, hasAudio, hasVideo, hasScreen }) => {
       if (userId === socket.id) return;
-      if ((hasAudio || hasVideo) && !peers.has(userId)) {
+      if ((hasAudio || hasVideo || hasScreen) && !peers.has(userId)) {
         callUser(userId);
       }
-      if (!hasAudio && !hasVideo) {
+      if (!hasAudio && !hasVideo && !hasScreen) {
         removePeer(userId);
       }
     });
@@ -248,20 +248,17 @@ const Call = (() => {
 
   async function startScreenShare() {
     screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-    // When user stops sharing via browser UI
     screenStream.getVideoTracks()[0].onended = () => {
       stopScreenShare();
       document.getElementById('screen-btn')?.classList.remove('active');
       _socket?.emit('media-state', { hasAudio: audioEnabled, hasVideo: videoEnabled, hasScreen: false });
     };
-    // Connect to all peers with this stream
-    _socket?.emit('request-call-peers');
-    // Also broadcast to new peers
-    for (const [peerId, peer] of peers) {
-      peer.pc.close();
-    }
+    // Close existing peers and reconnect with screen stream
+    for (const [, peer] of peers) peer.pc.close();
     peers.clear();
-    _socket?.emit('request-call-peers');
+    // Tell server we have screen, then request peers
+    _socket?.emit('media-state', { hasAudio: audioEnabled, hasVideo: videoEnabled, hasScreen: true });
+    setTimeout(() => _socket?.emit('request-call-peers'), 300);
     renderCallGrid();
   }
 
