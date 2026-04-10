@@ -243,48 +243,45 @@ const Call = (() => {
     return wrapper;
   }
 
-  // ---- Screen share (server relay, not WebRTC) ----
+  // ---- Screen share (server relay via MediaRecorder → MediaSource) ----
   let screenStream = null;
-  let screenInterval = null;
-  let screenCanvas = null;
-  let screenCtx = null;
+  let screenRecorder = null;
 
   async function startScreenShare() {
-    screenStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 10 }, audio: false });
+    screenStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 60 }, audio: true });
     screenStream.getVideoTracks()[0].onended = () => {
       stopScreenShare();
       document.getElementById('screen-btn')?.classList.remove('active');
       _socket?.emit('screen-stop');
     };
 
-    // Create hidden canvas for frame capture
-    screenCanvas = document.createElement('canvas');
-    screenCtx = screenCanvas.getContext('2d');
-    const video = document.createElement('video');
-    video.srcObject = screenStream;
-    video.muted = true;
-    video.play();
+    // Pick best supported codec
+    const mimeType = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm']
+      .find(m => MediaRecorder.isTypeSupported(m)) || 'video/webm';
 
-    // Wait for video to start
-    await new Promise(r => video.onplaying = r);
+    screenRecorder = new MediaRecorder(screenStream, {
+      mimeType,
+      videoBitsPerSecond: 2_500_000 // 2.5 Mbps — smooth 60fps
+    });
 
-    // Capture and send frames via Socket.IO
-    _socket?.emit('screen-start');
-    screenInterval = setInterval(() => {
-      if (!screenStream || !screenStream.active) { stopScreenShare(); return; }
-      screenCanvas.width = Math.min(video.videoWidth, 960);
-      screenCanvas.height = Math.min(video.videoHeight, 960 * video.videoHeight / video.videoWidth);
-      screenCtx.drawImage(video, 0, 0, screenCanvas.width, screenCanvas.height);
-      const frame = screenCanvas.toDataURL('image/jpeg', 0.6);
-      _socket?.emit('screen-frame', frame);
-    }, 150); // ~7fps
+    screenRecorder.ondataavailable = (e) => {
+      if (e.data.size > 0) {
+        e.data.arrayBuffer().then(buf => {
+          _socket?.emit('screen-chunk', { data: buf, mime: mimeType });
+        });
+      }
+    };
+
+    _socket?.emit('screen-start', { mime: mimeType });
+    screenRecorder.start(80); // chunk every 80ms — low latency
   }
 
   function stopScreenShare() {
-    if (screenInterval) { clearInterval(screenInterval); screenInterval = null; }
+    if (screenRecorder && screenRecorder.state !== 'inactive') {
+      try { screenRecorder.stop(); } catch(e) {}
+    }
+    screenRecorder = null;
     if (screenStream) { screenStream.getTracks().forEach(t => t.stop()); screenStream = null; }
-    screenCanvas = null;
-    screenCtx = null;
     _socket?.emit('screen-stop');
   }
 

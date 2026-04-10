@@ -119,18 +119,80 @@ const App = (() => {
     socket.on('poll-created', (poll) => renderPoll(poll));
     socket.on('poll-updated', (poll) => renderPoll(poll));
 
-    // Screen share relay
-    socket.on('screen-started', ({ nickname }) => {
+    // Screen share relay (MediaSource)
+    let screenSourceBuffer = null;
+    let screenMediaSource = null;
+    let screenQueue = [];
+    let screenAppending = false;
+
+    socket.on('screen-started', ({ nickname, mime }) => {
       toast(`${nickname} делится экраном`, 'info');
-      showScreenShare(true);
+      showScreenShare(true, mime || 'video/webm;codecs=vp8');
     });
-    socket.on('screen-frame', ({ frame }) => {
-      const img = document.getElementById('screen-share-img');
-      if (img) img.src = frame;
+
+    socket.on('screen-chunk', ({ data }) => {
+      if (!screenSourceBuffer) return;
+      const chunk = new Uint8Array(data);
+      if (screenSourceBuffer.updating) {
+        screenQueue.push(chunk);
+      } else {
+        try { screenSourceBuffer.appendBuffer(chunk); } catch(e) {}
+      }
     });
+
     socket.on('screen-stopped', () => {
       showScreenShare(false);
+      screenSourceBuffer = null;
+      screenMediaSource = null;
+      screenQueue = [];
     });
+
+    function showScreenShare(show, mime) {
+      let container = document.getElementById('screen-share-container');
+      if (show) {
+        if (!container) {
+          container = document.createElement('div');
+          container.id = 'screen-share-container';
+          container.className = 'screen-share-container';
+          document.getElementById('video-container').appendChild(container);
+        }
+        container.innerHTML = '';
+        container.style.display = 'flex';
+
+        const video = document.createElement('video');
+        video.id = 'screen-share-video';
+        video.className = 'screen-share-video';
+        video.autoplay = true;
+        video.playsInline = true;
+        video.muted = false;
+        container.appendChild(video);
+
+        screenMediaSource = new MediaSource();
+        video.src = URL.createObjectURL(screenMediaSource);
+
+        screenMediaSource.addEventListener('sourceopen', () => {
+          try {
+            screenSourceBuffer = screenMediaSource.addSourceBuffer(mime);
+            screenSourceBuffer.mode = 'sequence';
+            screenSourceBuffer.addEventListener('updateend', () => {
+              if (screenQueue.length > 0 && !screenSourceBuffer.updating) {
+                try { screenSourceBuffer.appendBuffer(screenQueue.shift()); } catch(e) {}
+              }
+              // Keep playback near live edge
+              if (video.buffered.length > 0) {
+                const end = video.buffered.end(video.buffered.length - 1);
+                if (end - video.currentTime > 2) video.currentTime = end - 0.3;
+              }
+            });
+          } catch(e) {
+            // Fallback: if MediaSource doesn't support the codec, show message
+            container.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center;">Кодек не поддерживается вашим браузером</div>';
+          }
+        });
+      } else {
+        if (container) container.style.display = 'none';
+      }
+    }
 
     // Reactions
     socket.on('reaction', ({ emoji }) => showFloatingReaction(emoji));
@@ -311,23 +373,6 @@ const App = (() => {
       } catch(e) {
         toast('Не удалось начать демонстрацию', 'error');
       }
-    }
-  }
-
-  function showScreenShare(show) {
-    let container = document.getElementById('screen-share-container');
-    if (show) {
-      if (!container) {
-        container = document.createElement('div');
-        container.id = 'screen-share-container';
-        container.className = 'screen-share-container';
-        container.innerHTML = '<img id="screen-share-img" class="screen-share-img" alt="Screen share">';
-        const videoContainer = document.getElementById('video-container');
-        videoContainer.appendChild(container);
-      }
-      container.style.display = 'flex';
-    } else {
-      if (container) container.style.display = 'none';
     }
   }
 

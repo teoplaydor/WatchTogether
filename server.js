@@ -420,17 +420,17 @@ io.on('connection', (socket) => {
   });
 
   // ---- Screen share relay (server-relayed, no WebRTC) ----
-  socket.on('screen-start', () => {
+  socket.on('screen-start', ({ mime }) => {
     const room = getRoom(currentRoom);
     if (!room) return;
     const user = room.users.get(socket.id);
     if (user) user.hasScreen = true;
-    socket.to(room.code).emit('screen-started', { userId: socket.id, nickname: user?.nickname });
+    socket.to(room.code).emit('screen-started', { userId: socket.id, nickname: user?.nickname, mime });
   });
 
-  socket.on('screen-frame', (frame) => {
+  socket.on('screen-chunk', ({ data, mime }) => {
     if (!currentRoom) return;
-    socket.to(currentRoom).emit('screen-frame', { from: socket.id, frame });
+    socket.to(currentRoom).emit('screen-chunk', { data });
   });
 
   socket.on('screen-stop', () => {
