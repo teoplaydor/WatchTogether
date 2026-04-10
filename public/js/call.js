@@ -95,6 +95,9 @@ const Call = (() => {
     if (localStream) {
       localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
     }
+    if (screenStream) {
+      screenStream.getTracks().forEach(track => pc.addTrack(track, screenStream));
+    }
 
     peers.set(peerId, { pc, stream: null });
     return pc;
@@ -240,21 +243,47 @@ const Call = (() => {
     return wrapper;
   }
 
-  function destroy() {
-    if (localStream) {
-      localStream.getTracks().forEach(t => t.stop());
-      localStream = null;
-    }
-    for (const [, peer] of peers) {
+  // ---- Screen share ----
+  let screenStream = null;
+
+  async function startScreenShare() {
+    screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    // When user stops sharing via browser UI
+    screenStream.getVideoTracks()[0].onended = () => {
+      stopScreenShare();
+      document.getElementById('screen-btn')?.classList.remove('active');
+      _socket?.emit('media-state', { hasAudio: audioEnabled, hasVideo: videoEnabled, hasScreen: false });
+    };
+    // Connect to all peers with this stream
+    _socket?.emit('request-call-peers');
+    // Also broadcast to new peers
+    for (const [peerId, peer] of peers) {
       peer.pc.close();
     }
     peers.clear();
-    audioEnabled = false;
-    videoEnabled = false;
-    updateBtn('mic-btn', false);
-    updateBtn('cam-btn', false);
+    _socket?.emit('request-call-peers');
     renderCallGrid();
   }
 
-  return { init, connectToRoom, handleCallPeers, destroy, renderCallGrid };
+  function stopScreenShare() {
+    if (screenStream) {
+      screenStream.getTracks().forEach(t => t.stop());
+      screenStream = null;
+    }
+    renderCallGrid();
+  }
+
+  function destroy() {
+    if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+    if (screenStream) { screenStream.getTracks().forEach(t => t.stop()); screenStream = null; }
+    for (const [, peer] of peers) peer.pc.close();
+    peers.clear();
+    audioEnabled = false; videoEnabled = false;
+    updateBtn('mic-btn', false);
+    updateBtn('cam-btn', false);
+    updateBtn('screen-btn', false);
+    renderCallGrid();
+  }
+
+  return { init, connectToRoom, handleCallPeers, startScreenShare, stopScreenShare, destroy, renderCallGrid };
 })();

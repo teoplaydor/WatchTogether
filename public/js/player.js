@@ -40,6 +40,14 @@ const Player = (() => {
     match = url.match(/rutube\.ru\/video\/([a-f0-9]+)/);
     if (match) return { platform: 'rutube', id: match[1], title: `Rutube: ${match[1].slice(0, 8)}...`, url };
 
+    // Twitch
+    match = url.match(/twitch\.tv\/(?:videos\/)?(\w+)/);
+    if (match) return { platform: 'twitch', id: match[1], title: `Twitch: ${match[1]}`, url };
+
+    // Dailymotion
+    match = url.match(/dailymotion\.com\/video\/([a-zA-Z0-9]+)/);
+    if (match) return { platform: 'dailymotion', id: match[1], title: `Dailymotion: ${match[1]}`, url };
+
     // Direct video URL
     if (/\.(mp4|webm|m3u8|ogg)(\?|$)/i.test(url)) {
       return { platform: 'direct', id: url, title: decodeURIComponent(url.split('/').pop().split('?')[0]), url };
@@ -144,6 +152,21 @@ const Player = (() => {
 
       case 'rutube':
         iframeEl.src = `https://rutube.ru/play/embed/${parsed.id}`;
+        iframeEl.style.display = 'block';
+        currentType = 'iframe';
+        break;
+
+      case 'twitch':
+        const isVod = /^\d+$/.test(parsed.id);
+        iframeEl.src = isVod
+          ? `https://player.twitch.tv/?video=${parsed.id}&parent=${location.hostname}&autoplay=false`
+          : `https://player.twitch.tv/?channel=${parsed.id}&parent=${location.hostname}&autoplay=false`;
+        iframeEl.style.display = 'block';
+        currentType = 'iframe';
+        break;
+
+      case 'dailymotion':
+        iframeEl.src = `https://www.dailymotion.com/embed/video/${parsed.id}`;
         iframeEl.style.display = 'block';
         currentType = 'iframe';
         break;

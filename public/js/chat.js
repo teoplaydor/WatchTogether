@@ -95,6 +95,32 @@ const Chat = (() => {
   function addMessage(msg, isHistory) {
     const div = document.createElement('div');
 
+    if (msg.type === 'poll') {
+      div.className = 'chat-msg chat-msg-poll';
+      const poll = msg.poll;
+      const totalVotes = poll.options.reduce((s, o) => s + o.votes.length, 0);
+      div.innerHTML = `
+        <div class="poll-question">📊 ${escapeHtml(poll.question)}</div>
+        <div class="poll-options">${poll.options.map((o, i) => {
+          const pct = totalVotes ? Math.round(o.votes.length / totalVotes * 100) : 0;
+          return `<button class="poll-option" data-poll-id="${poll.id}" data-index="${i}">
+            <span class="poll-option-text">${escapeHtml(o.text)}</span>
+            <span class="poll-option-bar" style="width:${pct}%"></span>
+            <span class="poll-option-count">${o.votes.length} (${pct}%)</span>
+          </button>`;
+        }).join('')}</div>
+        <div class="poll-meta">от ${escapeHtml(poll.createdBy)} · ${totalVotes} голосов</div>
+      `;
+      div.querySelectorAll('.poll-option').forEach(btn => {
+        btn.addEventListener('click', () => {
+          App.socket?.emit('vote-poll', { pollId: btn.dataset.pollId, optionIndex: parseInt(btn.dataset.index) });
+        });
+      });
+      messagesContainer.appendChild(div);
+      messagesContainer.scrollTop = messagesContainer.scrollHeight;
+      return;
+    }
+
     if (msg.type === 'system') {
       div.className = 'chat-msg chat-msg-system';
       div.textContent = msg.text;
