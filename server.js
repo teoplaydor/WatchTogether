@@ -419,10 +419,27 @@ io.on('connection', (socket) => {
     socket.to(room.code).emit('user-media-state', { userId: socket.id, hasAudio, hasVideo, hasScreen, users: getUserList(room) });
   });
 
-  // ---- Screen share signaling ----
-  socket.on('screen-offer', ({ to, offer }) => io.to(to).emit('screen-offer', { from: socket.id, offer }));
-  socket.on('screen-answer', ({ to, answer }) => io.to(to).emit('screen-answer', { from: socket.id, answer }));
-  socket.on('screen-ice', ({ to, candidate }) => io.to(to).emit('screen-ice', { from: socket.id, candidate }));
+  // ---- Screen share relay (server-relayed, no WebRTC) ----
+  socket.on('screen-start', () => {
+    const room = getRoom(currentRoom);
+    if (!room) return;
+    const user = room.users.get(socket.id);
+    if (user) user.hasScreen = true;
+    socket.to(room.code).emit('screen-started', { userId: socket.id, nickname: user?.nickname });
+  });
+
+  socket.on('screen-frame', (frame) => {
+    if (!currentRoom) return;
+    socket.to(currentRoom).emit('screen-frame', { from: socket.id, frame });
+  });
+
+  socket.on('screen-stop', () => {
+    const room = getRoom(currentRoom);
+    if (!room) return;
+    const user = room.users.get(socket.id);
+    if (user) user.hasScreen = false;
+    socket.to(room.code).emit('screen-stopped', { userId: socket.id });
+  });
 
   // ---- Leave / Disconnect ----
   function leaveRoom(sock) {

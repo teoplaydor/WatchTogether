@@ -94,12 +94,9 @@ const Call = (() => {
       }
     };
 
-    // Add local tracks if we have them
+    // Add local tracks (cam/mic only, screen share uses server relay)
     if (localStream) {
       localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-    }
-    if (screenStream) {
-      screenStream.getTracks().forEach(track => pc.addTrack(track, screenStream));
     }
 
     peers.set(peerId, { pc, stream: null });
@@ -246,31 +243,49 @@ const Call = (() => {
     return wrapper;
   }
 
-  // ---- Screen share ----
+  // ---- Screen share (server relay, not WebRTC) ----
   let screenStream = null;
+  let screenInterval = null;
+  let screenCanvas = null;
+  let screenCtx = null;
 
   async function startScreenShare() {
-    screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    screenStream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 10 }, audio: false });
     screenStream.getVideoTracks()[0].onended = () => {
       stopScreenShare();
       document.getElementById('screen-btn')?.classList.remove('active');
-      _socket?.emit('media-state', { hasAudio: audioEnabled, hasVideo: videoEnabled, hasScreen: false });
+      _socket?.emit('screen-stop');
     };
-    // Close existing peers and reconnect with screen stream
-    for (const [, peer] of peers) peer.pc.close();
-    peers.clear();
-    // Tell server we have screen, then request peers
-    _socket?.emit('media-state', { hasAudio: audioEnabled, hasVideo: videoEnabled, hasScreen: true });
-    setTimeout(() => _socket?.emit('request-call-peers'), 300);
-    renderCallGrid();
+
+    // Create hidden canvas for frame capture
+    screenCanvas = document.createElement('canvas');
+    screenCtx = screenCanvas.getContext('2d');
+    const video = document.createElement('video');
+    video.srcObject = screenStream;
+    video.muted = true;
+    video.play();
+
+    // Wait for video to start
+    await new Promise(r => video.onplaying = r);
+
+    // Capture and send frames via Socket.IO
+    _socket?.emit('screen-start');
+    screenInterval = setInterval(() => {
+      if (!screenStream || !screenStream.active) { stopScreenShare(); return; }
+      screenCanvas.width = Math.min(video.videoWidth, 960);
+      screenCanvas.height = Math.min(video.videoHeight, 960 * video.videoHeight / video.videoWidth);
+      screenCtx.drawImage(video, 0, 0, screenCanvas.width, screenCanvas.height);
+      const frame = screenCanvas.toDataURL('image/jpeg', 0.6);
+      _socket?.emit('screen-frame', frame);
+    }, 150); // ~7fps
   }
 
   function stopScreenShare() {
-    if (screenStream) {
-      screenStream.getTracks().forEach(t => t.stop());
-      screenStream = null;
-    }
-    renderCallGrid();
+    if (screenInterval) { clearInterval(screenInterval); screenInterval = null; }
+    if (screenStream) { screenStream.getTracks().forEach(t => t.stop()); screenStream = null; }
+    screenCanvas = null;
+    screenCtx = null;
+    _socket?.emit('screen-stop');
   }
 
   function destroy() {

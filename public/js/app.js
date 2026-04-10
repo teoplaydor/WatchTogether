@@ -119,6 +119,19 @@ const App = (() => {
     socket.on('poll-created', (poll) => renderPoll(poll));
     socket.on('poll-updated', (poll) => renderPoll(poll));
 
+    // Screen share relay
+    socket.on('screen-started', ({ nickname }) => {
+      toast(`${nickname} делится экраном`, 'info');
+      showScreenShare(true);
+    });
+    socket.on('screen-frame', ({ frame }) => {
+      const img = document.getElementById('screen-share-img');
+      if (img) img.src = frame;
+    });
+    socket.on('screen-stopped', () => {
+      showScreenShare(false);
+    });
+
     // Reactions
     socket.on('reaction', ({ emoji }) => showFloatingReaction(emoji));
   }
@@ -298,6 +311,23 @@ const App = (() => {
       } catch(e) {
         toast('Не удалось начать демонстрацию', 'error');
       }
+    }
+  }
+
+  function showScreenShare(show) {
+    let container = document.getElementById('screen-share-container');
+    if (show) {
+      if (!container) {
+        container = document.createElement('div');
+        container.id = 'screen-share-container';
+        container.className = 'screen-share-container';
+        container.innerHTML = '<img id="screen-share-img" class="screen-share-img" alt="Screen share">';
+        const videoContainer = document.getElementById('video-container');
+        videoContainer.appendChild(container);
+      }
+      container.style.display = 'flex';
+    } else {
+      if (container) container.style.display = 'none';
     }
   }
 
