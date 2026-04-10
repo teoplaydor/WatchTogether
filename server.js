@@ -394,9 +394,16 @@ io.on('connection', (socket) => {
   socket.on('request-call-peers', () => {
     const room = getRoom(currentRoom);
     if (!room) return;
+    const me = room.users.get(socket.id);
+    const iHaveMedia = me && (me.hasAudio || me.hasVideo || me.hasScreen);
     const peerIds = [];
     for (const [id, u] of room.users) {
-      if (id !== socket.id && (u.hasAudio || u.hasVideo || u.hasScreen)) peerIds.push(id);
+      if (id === socket.id) continue;
+      // If I have media: send to ALL users (they need to receive my stream)
+      // If I don't: only connect to users who have media (to receive theirs)
+      if (iHaveMedia || u.hasAudio || u.hasVideo || u.hasScreen) {
+        peerIds.push(id);
+      }
     }
     socket.emit('call-peers', peerIds);
   });
