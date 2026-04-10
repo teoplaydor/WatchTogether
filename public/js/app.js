@@ -63,7 +63,7 @@ const App = (() => {
               Player.load(res.currentVideo, Sync.onPlayerStateChange);
               if (res.playbackState?.currentTime > 0) setTimeout(() => Player.seekTo(res.playbackState.currentTime), 1000);
             }
-            Call.init(socket);
+            Call.init(socket, res.iceServers);
             toast('Переподключились!', 'success');
           } else {
             toast('Комната больше не существует', 'error');
@@ -119,80 +119,7 @@ const App = (() => {
     socket.on('poll-created', (poll) => renderPoll(poll));
     socket.on('poll-updated', (poll) => renderPoll(poll));
 
-    // Screen share relay (MediaSource)
-    let screenSourceBuffer = null;
-    let screenMediaSource = null;
-    let screenQueue = [];
-    let screenAppending = false;
-
-    socket.on('screen-started', ({ nickname, mime }) => {
-      toast(`${nickname} делится экраном`, 'info');
-      showScreenShare(true, mime || 'video/webm;codecs=vp8');
-    });
-
-    socket.on('screen-chunk', ({ data }) => {
-      if (!screenSourceBuffer) return;
-      const chunk = new Uint8Array(data);
-      if (screenSourceBuffer.updating) {
-        screenQueue.push(chunk);
-      } else {
-        try { screenSourceBuffer.appendBuffer(chunk); } catch(e) {}
-      }
-    });
-
-    socket.on('screen-stopped', () => {
-      showScreenShare(false);
-      screenSourceBuffer = null;
-      screenMediaSource = null;
-      screenQueue = [];
-    });
-
-    function showScreenShare(show, mime) {
-      let container = document.getElementById('screen-share-container');
-      if (show) {
-        if (!container) {
-          container = document.createElement('div');
-          container.id = 'screen-share-container';
-          container.className = 'screen-share-container';
-          document.getElementById('video-container').appendChild(container);
-        }
-        container.innerHTML = '';
-        container.style.display = 'flex';
-
-        const video = document.createElement('video');
-        video.id = 'screen-share-video';
-        video.className = 'screen-share-video';
-        video.autoplay = true;
-        video.playsInline = true;
-        video.muted = false;
-        container.appendChild(video);
-
-        screenMediaSource = new MediaSource();
-        video.src = URL.createObjectURL(screenMediaSource);
-
-        screenMediaSource.addEventListener('sourceopen', () => {
-          try {
-            screenSourceBuffer = screenMediaSource.addSourceBuffer(mime);
-            screenSourceBuffer.mode = 'sequence';
-            screenSourceBuffer.addEventListener('updateend', () => {
-              if (screenQueue.length > 0 && !screenSourceBuffer.updating) {
-                try { screenSourceBuffer.appendBuffer(screenQueue.shift()); } catch(e) {}
-              }
-              // Keep playback near live edge
-              if (video.buffered.length > 0) {
-                const end = video.buffered.end(video.buffered.length - 1);
-                if (end - video.currentTime > 2) video.currentTime = end - 0.3;
-              }
-            });
-          } catch(e) {
-            // Fallback: if MediaSource doesn't support the codec, show message
-            container.innerHTML = '<div style="color:var(--text-muted);padding:20px;text-align:center;">Кодек не поддерживается вашим браузером</div>';
-          }
-        });
-      } else {
-        if (container) container.style.display = 'none';
-      }
-    }
+    // Screen share is handled via WebRTC in call.js (60fps native)
 
     // Reactions
     socket.on('reaction', ({ emoji }) => showFloatingReaction(emoji));
@@ -302,7 +229,7 @@ const App = (() => {
     }
 
     showMobilePanel('video');
-    Call.init(socket);
+    Call.init(socket, data.iceServers);
     startStatusUpdates();
     toast(`Комната: ${roomCode}`, 'success');
   }

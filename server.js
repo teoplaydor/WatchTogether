@@ -3,6 +3,27 @@ const http = require('http');
 const { Server } = require('socket.io');
 const { v4: uuidv4 } = require('uuid');
 const path = require('path');
+const crypto = require('crypto');
+
+// Generate TURN credentials using static auth (HMAC-SHA1)
+const TURN_SECRET = 'openrelayprojectsecret';
+function getTurnCredentials() {
+  const unixTime = Math.floor(Date.now() / 1000) + 86400; // 24h validity
+  const username = `${unixTime}:watchtogether`;
+  const hmac = crypto.createHmac('sha1', TURN_SECRET);
+  hmac.write(username);
+  hmac.end();
+  const password = hmac.read().toString('base64');
+  return {
+    iceServers: [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'turn:staticauth.openrelay.metered.ca:80', username, credential: password },
+      { urls: 'turn:staticauth.openrelay.metered.ca:443', username, credential: password },
+      { urls: 'turn:staticauth.openrelay.metered.ca:443?transport=tcp', username, credential: password },
+    ]
+  };
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -121,7 +142,8 @@ io.on('connection', (socket) => {
     callback({
       success: true, roomCode: room.code, isHost: true, hasPassword: !!room.password,
       users: getUserList(room), playlist: room.playlist, currentIndex: room.currentIndex,
-      playbackState: room.playbackState, messages: room.messages, watchHistory: room.watchHistory
+      playbackState: room.playbackState, messages: room.messages, watchHistory: room.watchHistory,
+      ...getTurnCredentials()
     });
   });
 
@@ -153,7 +175,8 @@ io.on('connection', (socket) => {
       success: true, roomCode: room.code, isHost: socket.id === room.hostId, hasPassword: !!room.password,
       users, playlist: room.playlist, currentIndex: room.currentIndex,
       playbackState: { ...room.playbackState, currentTime: getEstimatedTime(room) },
-      currentVideo: getCurrentVideo(room), messages: room.messages, watchHistory: room.watchHistory
+      currentVideo: getCurrentVideo(room), messages: room.messages, watchHistory: room.watchHistory,
+      ...getTurnCredentials()
     });
   });
 
@@ -419,18 +442,13 @@ io.on('connection', (socket) => {
     socket.to(room.code).emit('user-media-state', { userId: socket.id, hasAudio, hasVideo, hasScreen, users: getUserList(room) });
   });
 
-  // ---- Screen share relay (server-relayed, no WebRTC) ----
-  socket.on('screen-start', ({ mime }) => {
+  // ---- Screen share state ----
+  socket.on('screen-start', () => {
     const room = getRoom(currentRoom);
     if (!room) return;
     const user = room.users.get(socket.id);
     if (user) user.hasScreen = true;
-    socket.to(room.code).emit('screen-started', { userId: socket.id, nickname: user?.nickname, mime });
-  });
-
-  socket.on('screen-chunk', ({ data, mime }) => {
-    if (!currentRoom) return;
-    socket.to(currentRoom).emit('screen-chunk', { data });
+    socket.to(room.code).emit('screen-started', { userId: socket.id, nickname: user?.nickname });
   });
 
   socket.on('screen-stop', () => {
