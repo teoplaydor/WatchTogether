@@ -113,7 +113,7 @@ const App = (() => {
     // Status
     socket.on('room-status', ({ users: u }) => { users = u; renderUsers(); renderChatUsersBar(); });
     socket.on('user-media-state', ({ users: u }) => { users = u; renderUsers(); renderChatUsersBar(); });
-    socket.on('call-peers', (peerIds) => Call.handleCallPeers(peerIds));
+    // call-peers handled inside Call module
 
     // Polls
     socket.on('poll-created', (poll) => renderPoll(poll));

@@ -1,58 +1,64 @@
 // ==================== WEBRTC CALL MODULE ====================
 
 const Call = (() => {
-  // ICE servers are provided by the server (includes TURN with HMAC credentials)
   let iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
-
   let localStream = null;
   let screenStream = null;
   let audioEnabled = false;
   let videoEnabled = false;
   let _socket = null;
-  const peers = new Map(); // peerId -> { pc, stream }
+  let _initialized = false;
+  const peers = new Map();
 
   function init(socket, serverIceServers) {
     _socket = socket;
     if (serverIceServers) iceServers = serverIceServers;
 
+    // Prevent duplicate listeners on reconnect
+    if (_initialized) return;
+    _initialized = true;
+
     socket.on('call-offer', async ({ from, offer }) => {
-      console.log('[CALL] Received offer from', from);
+      console.log('[CALL] Got offer from', from);
+      // Always reset peer on incoming offer to avoid m-line conflicts
       if (peers.has(from)) { peers.get(from).pc.close(); peers.delete(from); }
-      const pc = getOrCreatePeer(from);
+      const pc = createPeer(from);
       try {
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         socket.emit('call-answer', { to: from, answer });
         console.log('[CALL] Sent answer to', from);
-      } catch(e) { console.warn('[CALL] call-offer error', e); }
+      } catch(e) { console.error('[CALL] offer error', e); }
     });
 
     socket.on('call-answer', async ({ from, answer }) => {
       const peer = peers.get(from);
-      if (peer) try { await peer.pc.setRemoteDescription(new RTCSessionDescription(answer)); } catch(e) {}
+      if (peer) {
+        try { await peer.pc.setRemoteDescription(new RTCSessionDescription(answer)); }
+        catch(e) { console.error('[CALL] answer error', e); }
+      }
     });
 
     socket.on('ice-candidate', async ({ from, candidate }) => {
       const peer = peers.get(from);
-      if (peer && candidate) try { await peer.pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch(e) {}
+      if (peer && candidate) {
+        try { await peer.pc.addIceCandidate(new RTCIceCandidate(candidate)); } catch(e) {}
+      }
     });
 
     socket.on('user-left', ({ userId }) => removePeer(userId));
 
-    // When another user enables media — only lower ID initiates to prevent glare
     socket.on('user-media-state', ({ userId, hasAudio, hasVideo, hasScreen }) => {
       if (userId === socket.id) return;
       if ((hasAudio || hasVideo || hasScreen) && !peers.has(userId)) {
-        if (socket.id < userId) callUser(userId);
-        // else: wait for their offer to arrive via call-offer handler
+        callUser(userId);
       }
       if (!hasAudio && !hasVideo && !hasScreen) {
         removePeer(userId);
       }
     });
 
-    // Screen share events
     socket.on('screen-started', ({ nickname }) => {
       App.toast(`${nickname} делится экраном`, 'info');
     });
@@ -61,16 +67,21 @@ const Call = (() => {
       renderCallGrid();
     });
 
+    socket.on('call-peers', (peerIds) => {
+      console.log('[CALL] Got peers list:', peerIds.length);
+      peerIds.forEach(id => {
+        if (id !== socket.id && !peers.has(id)) callUser(id);
+      });
+    });
+
     document.getElementById('mic-btn')?.addEventListener('click', () => toggleAudio());
     document.getElementById('cam-btn')?.addEventListener('click', () => toggleVideo());
 
-    // Request peers on init
+    // Check for existing media peers
     socket.emit('request-call-peers');
   }
 
-  function getOrCreatePeer(peerId) {
-    if (peers.has(peerId)) return peers.get(peerId).pc;
-
+  function createPeer(peerId) {
     const pc = new RTCPeerConnection({ iceServers });
 
     pc.onicecandidate = (e) => {
@@ -78,6 +89,7 @@ const Call = (() => {
     };
 
     pc.ontrack = (e) => {
+      console.log('[CALL] Got track from', peerId, e.track.kind);
       const peer = peers.get(peerId);
       if (!peer) return;
       if (!peer.stream) peer.stream = new MediaStream();
@@ -86,14 +98,15 @@ const Call = (() => {
     };
 
     pc.oniceconnectionstatechange = () => {
-      console.log(`[CALL] ICE state with ${peerId}: ${pc.iceConnectionState}`);
-    };
-    pc.onconnectionstatechange = () => {
-      console.log(`[CALL] Connection state with ${peerId}: ${pc.connectionState}`);
-      if (pc.connectionState === 'failed') removePeer(peerId);
+      console.log('[CALL] ICE:', peerId.slice(-4), pc.iceConnectionState);
+      if (pc.iceConnectionState === 'failed') {
+        console.log('[CALL] Connection failed, retrying...');
+        removePeer(peerId);
+        setTimeout(() => callUser(peerId), 2000);
+      }
     };
 
-    // Add all local tracks
+    // Add all our active tracks
     if (localStream) localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
     if (screenStream) screenStream.getTracks().forEach(t => pc.addTrack(t, screenStream));
 
@@ -104,6 +117,18 @@ const Call = (() => {
   function removePeer(peerId) {
     const peer = peers.get(peerId);
     if (peer) { peer.pc.close(); peers.delete(peerId); renderCallGrid(); }
+  }
+
+  async function callUser(peerId) {
+    // If peer already exists with a connection, don't duplicate
+    if (peers.has(peerId)) return;
+    console.log('[CALL] Calling', peerId.slice(-4));
+    const pc = createPeer(peerId);
+    try {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      _socket.emit('call-offer', { to: peerId, offer });
+    } catch(e) { console.error('[CALL] callUser error', e); }
   }
 
   async function startMedia(audio, video) {
@@ -117,24 +142,21 @@ const Call = (() => {
 
   async function toggleAudio() {
     audioEnabled = !audioEnabled;
-    const ok = await startMedia(audioEnabled, videoEnabled);
-    if (!ok && audioEnabled) { audioEnabled = false; return; }
+    if (!await startMedia(audioEnabled, videoEnabled) && audioEnabled) { audioEnabled = false; return; }
     updateBtn('mic-btn', audioEnabled);
     _socket.emit('media-state', { hasAudio: audioEnabled, hasVideo: videoEnabled, hasScreen: !!screenStream });
-    await reconnectPeers();
+    reconnectPeers();
   }
 
   async function toggleVideo() {
     videoEnabled = !videoEnabled;
-    const ok = await startMedia(audioEnabled, videoEnabled);
-    if (!ok && videoEnabled) { videoEnabled = false; return; }
+    if (!await startMedia(audioEnabled, videoEnabled) && videoEnabled) { videoEnabled = false; return; }
     updateBtn('cam-btn', videoEnabled);
     _socket.emit('media-state', { hasAudio: audioEnabled, hasVideo: videoEnabled, hasScreen: !!screenStream });
-    await reconnectPeers();
+    reconnectPeers();
     renderCallGrid();
   }
 
-  // ---- Screen share via WebRTC (60fps native) ----
   async function startScreenShare() {
     screenStream = await navigator.mediaDevices.getDisplayMedia({
       video: { frameRate: 60, width: { ideal: 1920 }, height: { ideal: 1080 } },
@@ -146,7 +168,7 @@ const Call = (() => {
     };
     _socket?.emit('screen-start');
     _socket?.emit('media-state', { hasAudio: audioEnabled, hasVideo: videoEnabled, hasScreen: true });
-    await reconnectPeers();
+    reconnectPeers();
     renderCallGrid();
   }
 
@@ -158,36 +180,15 @@ const Call = (() => {
     renderCallGrid();
   }
 
-  // Close all peers and reconnect with current tracks
-  async function reconnectPeers() {
+  function reconnectPeers() {
     for (const [, peer] of peers) peer.pc.close();
     peers.clear();
-    // Both sides request peers; handleCallPeers decides who initiates
     _socket?.emit('request-call-peers');
-    // Also broadcast media state so the other side knows to request peers too
-  }
-
-  function handleCallPeers(peerIds) {
-    peerIds.forEach(id => {
-      if (id !== _socket?.id && !peers.has(id)) {
-        // Only initiate if our ID is lower (prevents simultaneous offers / glare)
-        if (_socket.id < id) callUser(id);
-      }
-    });
-  }
-
-  async function callUser(peerId) {
-    const pc = getOrCreatePeer(peerId);
-    try {
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      _socket.emit('call-offer', { to: peerId, offer });
-    } catch(e) { console.warn('callUser error', e); }
   }
 
   function connectToRoom(users) {
     if (!audioEnabled && !videoEnabled && !screenStream) return;
-    users.forEach(u => { if (u.id !== _socket?.id) callUser(u.id); });
+    users.forEach(u => { if (u.id !== _socket?.id && !peers.has(u.id)) callUser(u.id); });
   }
 
   function updateBtn(id, active) {
@@ -195,21 +196,12 @@ const Call = (() => {
     if (btn) btn.classList.toggle('active', active);
   }
 
-  // Render video grid
   function renderCallGrid() {
     const grid = document.getElementById('call-grid');
     if (!grid) return;
     grid.innerHTML = '';
-
-    // Local camera
-    if (localStream && videoEnabled) {
-      grid.appendChild(createVideoEl('Вы', localStream, true));
-    }
-    // Local screen (preview)
-    if (screenStream) {
-      grid.appendChild(createVideoEl('Ваш экран', screenStream, true));
-    }
-    // Remote streams
+    if (localStream && videoEnabled) grid.appendChild(createVideoEl('Вы', localStream, true));
+    if (screenStream) grid.appendChild(createVideoEl('Ваш экран', screenStream, true));
     for (const [, peer] of peers) {
       if (peer.stream && peer.stream.getTracks().length > 0) {
         grid.appendChild(createVideoEl('', peer.stream, false));
@@ -219,19 +211,19 @@ const Call = (() => {
   }
 
   function createVideoEl(label, stream, muted) {
-    const wrapper = document.createElement('div');
-    wrapper.className = 'call-video-item';
-    const video = document.createElement('video');
-    video.autoplay = true; video.playsInline = true; video.muted = muted;
-    video.srcObject = stream;
-    video.play().catch(() => { video.muted = true; video.play().catch(() => {}); });
-    wrapper.appendChild(video);
+    const w = document.createElement('div');
+    w.className = 'call-video-item';
+    const v = document.createElement('video');
+    v.autoplay = true; v.playsInline = true; v.muted = muted;
+    v.srcObject = stream;
+    v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
+    w.appendChild(v);
     if (label) {
-      const lbl = document.createElement('span');
-      lbl.className = 'call-video-label'; lbl.textContent = label;
-      wrapper.appendChild(lbl);
+      const l = document.createElement('span');
+      l.className = 'call-video-label'; l.textContent = label;
+      w.appendChild(l);
     }
-    return wrapper;
+    return w;
   }
 
   function destroy() {
@@ -244,5 +236,5 @@ const Call = (() => {
     renderCallGrid();
   }
 
-  return { init, connectToRoom, handleCallPeers, startScreenShare, stopScreenShare, destroy, renderCallGrid };
+  return { init, connectToRoom, startScreenShare, stopScreenShare, destroy, renderCallGrid };
 })();
