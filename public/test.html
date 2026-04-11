@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html>
+<head><title>WebRTC Test</title></head>
+<body style="background:#111;color:#0f0;font-family:monospace;padding:20px;">
+<h2>WebRTC Screen Share Test</h2>
+<pre id="log"></pre>
+<div id="videos" style="display:flex;gap:10px;margin-top:20px;"></div>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const log = (msg) => { document.getElementById('log').textContent += msg + '\n'; console.log(msg); };
+
+async function runTest() {
+  log('=== Starting WebRTC test ===');
+
+  // Connect two sockets (simulating two users)
+  const sock1 = io();
+  const sock2 = io();
+
+  await Promise.all([
+    new Promise(r => sock1.on('connect', r)),
+    new Promise(r => sock2.on('connect', r))
+  ]);
+  log('Both sockets connected: ' + sock1.id.slice(-4) + ' & ' + sock2.id.slice(-4));
+
+  // User 1 creates room
+  const roomData = await new Promise(r => {
+    sock1.emit('create-room', { nickname: 'TestUser1', avatar: '😎' }, r);
+  });
+  log('Room created: ' + roomData.roomCode);
+  const iceServers = roomData.iceServers;
+  log('ICE servers: ' + iceServers.length + ' entries');
+  iceServers.forEach(s => log('  ' + s.urls));
+
+  // User 2 joins room
+  const joinData = await new Promise(r => {
+    sock2.emit('join-room', { code: roomData.roomCode, nickname: 'TestUser2', avatar: '🐱' }, r);
+  });
+  log('User2 joined: ' + joinData.success);
+
+  // Create fake video stream (canvas)
+  const canvas = document.createElement('canvas');
+  canvas.width = 320; canvas.height = 240;
+  const ctx = canvas.getContext('2d');
+  let frame = 0;
+  setInterval(() => {
+    ctx.fillStyle = `hsl(${frame++ % 360}, 80%, 50%)`;
+    ctx.fillRect(0, 0, 320, 240);
+    ctx.fillStyle = '#fff';
+    ctx.font = '24px monospace';
+    ctx.fillText('Frame ' + frame, 80, 130);
+  }, 33);
+  const fakeStream = canvas.captureStream(30);
+  log('Fake stream created: ' + fakeStream.getTracks().length + ' tracks');
+
+  // Setup WebRTC: User1 (sender) -> User2 (receiver)
+  const pc1 = new RTCPeerConnection({ iceServers });
+  const pc2 = new RTCPeerConnection({ iceServers });
+
+  // ICE candidates relay via sockets
+  sock1.on('ice-candidate', async ({ from, candidate }) => {
+    if (candidate) try { await pc1.addIceCandidate(new RTCIceCandidate(candidate)); } catch(e) {}
+  });
+  sock2.on('ice-candidate', async ({ from, candidate }) => {
+    if (candidate) try { await pc2.addIceCandidate(new RTCIceCandidate(candidate)); } catch(e) {}
+  });
+
+  pc1.onicecandidate = e => {
+    if (e.candidate) sock1.emit('ice-candidate', { to: sock2.id, candidate: e.candidate });
+  };
+  pc2.onicecandidate = e => {
+    if (e.candidate) sock2.emit('ice-candidate', { to: sock1.id, candidate: e.candidate });
+  };
+
+  // Monitor ICE states
+  pc1.oniceconnectionstatechange = () => log('PC1 ICE: ' + pc1.iceConnectionState);
+  pc2.oniceconnectionstatechange = () => log('PC2 ICE: ' + pc2.iceConnectionState);
+  pc1.onconnectionstatechange = () => log('PC1 Connection: ' + pc1.connectionState);
+  pc2.onconnectionstatechange = () => log('PC2 Connection: ' + pc2.connectionState);
+
+  // Receiver: handle incoming tracks
+  pc2.ontrack = (e) => {
+    log('PC2 GOT TRACK: ' + e.track.kind + ' (id: ' + e.track.id.slice(-6) + ')');
+    const video = document.createElement('video');
+    video.autoplay = true;
+    video.playsInline = true;
+    video.muted = true;
+    video.style.cssText = 'width:320px;height:240px;border:2px solid lime;';
+    if (!video.srcObject) video.srcObject = new MediaStream();
+    video.srcObject.addTrack(e.track);
+    video.play().catch(() => {});
+    document.getElementById('videos').appendChild(video);
+    log('VIDEO ELEMENT CREATED - should show colored frames');
+  };
+
+  // Sender: add tracks and create offer
+  fakeStream.getTracks().forEach(t => {
+    pc1.addTrack(t, fakeStream);
+    log('Added track to PC1: ' + t.kind);
+  });
+
+  // Signaling via sockets
+  sock2.on('call-offer', async ({ from, offer }) => {
+    log('PC2 received offer from ' + from.slice(-4));
+    await pc2.setRemoteDescription(new RTCSessionDescription(offer));
+    const answer = await pc2.createAnswer();
+    await pc2.setLocalDescription(answer);
+    sock2.emit('call-answer', { to: from, answer });
+    log('PC2 sent answer');
+  });
+
+  sock1.on('call-answer', async ({ from, answer }) => {
+    log('PC1 received answer from ' + from.slice(-4));
+    await pc1.setRemoteDescription(new RTCSessionDescription(answer));
+  });
+
+  // Create and send offer
+  const offer = await pc1.createOffer();
+  await pc1.setLocalDescription(offer);
+  sock1.emit('call-offer', { to: sock2.id, offer });
+  log('PC1 sent offer to ' + sock2.id.slice(-4));
+
+  // Timeout check
+  setTimeout(() => {
+    log('=== Status after 10s ===');
+    log('PC1: ' + pc1.connectionState + ' / ICE: ' + pc1.iceConnectionState);
+    log('PC2: ' + pc2.connectionState + ' / ICE: ' + pc2.iceConnectionState);
+    log('Videos rendered: ' + document.getElementById('videos').children.length);
+    if (pc2.connectionState === 'connected') {
+      log('SUCCESS: WebRTC connection established!');
+    } else {
+      log('FAIL: Connection not established. TURN servers may not be working.');
+    }
+  }, 10000);
+}
+
+runTest().catch(e => log('ERROR: ' + e.message));
+</script>
+</body>
+</html>
