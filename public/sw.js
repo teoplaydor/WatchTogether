@@ -29,15 +29,17 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Don't cache socket.io or API calls
+  // Only cache http/https requests from our origin
+  if (!url.protocol.startsWith('http')) return;
   if (url.pathname.startsWith('/socket.io')) return;
+  if (url.pathname === '/ping') return;
 
   event.respondWith(
     fetch(event.request)
       .then(response => {
         if (response.ok && event.request.method === 'GET') {
           const clone = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+          caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone)).catch(() => {});
         }
         return response;
       })
