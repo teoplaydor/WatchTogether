@@ -5,20 +5,14 @@ const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const crypto = require('crypto');
 
-// Multiple free TURN servers for maximum compatibility
-function getTurnCredentials() {
+// ICE servers (STUN only — free TURN servers are unreliable)
+// Screen share uses server relay instead of WebRTC for cross-network compatibility
+function getIceServers() {
   return {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
-      // freestun.net — free TURN
-      { urls: 'turn:freestun.net:3478', username: 'free', credential: 'free' },
-      { urls: 'turn:freestun.net:5349', username: 'free', credential: 'free' },
-      { urls: 'turns:freestun.net:5349', username: 'free', credential: 'free' },
-      // openrelay — free TURN (plain credentials)
-      { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
-      { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
-      { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'stun:stun2.l.google.com:19302' },
     ]
   };
 }
@@ -141,7 +135,7 @@ io.on('connection', (socket) => {
       success: true, roomCode: room.code, isHost: true, hasPassword: !!room.password,
       users: getUserList(room), playlist: room.playlist, currentIndex: room.currentIndex,
       playbackState: room.playbackState, messages: room.messages, watchHistory: room.watchHistory,
-      ...getTurnCredentials()
+      ...getIceServers()
     });
   });
 
@@ -174,7 +168,7 @@ io.on('connection', (socket) => {
       users, playlist: room.playlist, currentIndex: room.currentIndex,
       playbackState: { ...room.playbackState, currentTime: getEstimatedTime(room) },
       currentVideo: getCurrentVideo(room), messages: room.messages, watchHistory: room.watchHistory,
-      ...getTurnCredentials()
+      ...getIceServers()
     });
   });
 
@@ -440,13 +434,18 @@ io.on('connection', (socket) => {
     socket.to(room.code).emit('user-media-state', { userId: socket.id, hasAudio, hasVideo, hasScreen, users: getUserList(room) });
   });
 
-  // ---- Screen share state ----
+  // ---- Screen share (server relay) ----
   socket.on('screen-start', () => {
     const room = getRoom(currentRoom);
     if (!room) return;
     const user = room.users.get(socket.id);
     if (user) user.hasScreen = true;
     socket.to(room.code).emit('screen-started', { userId: socket.id, nickname: user?.nickname });
+  });
+
+  socket.on('screen-frame', (data) => {
+    if (!currentRoom) return;
+    socket.volatile.to(currentRoom).emit('screen-frame', data);
   });
 
   socket.on('screen-stop', () => {
