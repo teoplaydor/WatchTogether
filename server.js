@@ -5,22 +5,20 @@ const { v4: uuidv4 } = require('uuid');
 const path = require('path');
 const crypto = require('crypto');
 
-// Generate TURN credentials using static auth (HMAC-SHA1)
-const TURN_SECRET = 'openrelayprojectsecret';
+// Multiple free TURN servers for maximum compatibility
 function getTurnCredentials() {
-  const unixTime = Math.floor(Date.now() / 1000) + 86400; // 24h validity
-  const username = `${unixTime}:watchtogether`;
-  const hmac = crypto.createHmac('sha1', TURN_SECRET);
-  hmac.write(username);
-  hmac.end();
-  const password = hmac.read().toString('base64');
   return {
     iceServers: [
       { urls: 'stun:stun.l.google.com:19302' },
       { urls: 'stun:stun1.l.google.com:19302' },
-      { urls: 'turn:staticauth.openrelay.metered.ca:80', username, credential: password },
-      { urls: 'turn:staticauth.openrelay.metered.ca:443', username, credential: password },
-      { urls: 'turn:staticauth.openrelay.metered.ca:443?transport=tcp', username, credential: password },
+      // freestun.net — free TURN
+      { urls: 'turn:freestun.net:3478', username: 'free', credential: 'free' },
+      { urls: 'turn:freestun.net:5349', username: 'free', credential: 'free' },
+      { urls: 'turns:freestun.net:5349', username: 'free', credential: 'free' },
+      // openrelay — free TURN (plain credentials)
+      { urls: 'turn:openrelay.metered.ca:80', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443', username: 'openrelayproject', credential: 'openrelayproject' },
+      { urls: 'turn:openrelay.metered.ca:443?transport=tcp', username: 'openrelayproject', credential: 'openrelayproject' },
     ]
   };
 }
