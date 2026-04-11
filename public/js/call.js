@@ -145,7 +145,7 @@ const Call = (() => {
     if (!await startMedia(audioEnabled, videoEnabled) && audioEnabled) { audioEnabled = false; return; }
     updateBtn('mic-btn', audioEnabled);
     _socket.emit('media-state', { hasAudio: audioEnabled, hasVideo: videoEnabled, hasScreen: !!screenStream });
-    reconnectPeers();
+    setTimeout(() => reconnectPeers(), 500);
   }
 
   async function toggleVideo() {
@@ -153,7 +153,7 @@ const Call = (() => {
     if (!await startMedia(audioEnabled, videoEnabled) && videoEnabled) { videoEnabled = false; return; }
     updateBtn('cam-btn', videoEnabled);
     _socket.emit('media-state', { hasAudio: audioEnabled, hasVideo: videoEnabled, hasScreen: !!screenStream });
-    reconnectPeers();
+    setTimeout(() => reconnectPeers(), 500);
     renderCallGrid();
   }
 
@@ -168,7 +168,8 @@ const Call = (() => {
     };
     _socket?.emit('screen-start');
     _socket?.emit('media-state', { hasAudio: audioEnabled, hasVideo: videoEnabled, hasScreen: true });
-    reconnectPeers();
+    // Wait for server to process media-state before requesting peers
+    setTimeout(() => reconnectPeers(), 500);
     renderCallGrid();
   }
 
